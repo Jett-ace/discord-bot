@@ -243,8 +243,8 @@ ITEMS = {
         "aliases": ["counter", "card count"],
         "emoji": "<a:counter:1458347417329209426>",
         "rarity": "Legendary",
-        "base_price": 15000000,
-        "description": "Reveal dealer's hidden card in blackjack - guaranteed win",
+        "base_price": 5000000,
+        "description": "Reveal dealer's hidden card in blackjack for a strategic advantage",
         "type": "consumable",
         "duration": "Single use",
         "stackable": True,
@@ -283,9 +283,9 @@ ITEMS = {
         "emoji": "<:luckyhorseshoe:1458353830704975884>",
         "rarity": "Mythic",
         "base_price": 45000000,
-        "description": "+3% win chance on ALL gambling games",
+        "description": "+10% win chance on ALL gambling games",
         "type": "consumable",
-        "duration": "24 hours",
+        "duration": "4 hours",
         "stackable": False,
         "source": "Black Market"
     }

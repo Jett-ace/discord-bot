@@ -1794,13 +1794,45 @@ async def has_lucky_horseshoe(user_id):
             return False
         
         activated_time = datetime.fromisoformat(result[0])
-        expiry = activated_time + timedelta(hours=24)
+        expiry = activated_time + timedelta(hours=4)
         
         # Check if still active
         if datetime.now() > expiry:
             # Expired - remove from inventory
             await db.execute(
                 "UPDATE inventory SET activated_at = NULL, quantity = quantity - 1 WHERE user_id = ? AND item_id = 'lucky_horseshoe'",
+                (user_id,)
+            )
+            await db.execute(
+                "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                (user_id,)
+            )
+            await db.commit()
+            return False
+        
+        return True
+
+async def has_lucky_clover(user_id):
+    """Check if user has active lucky clover"""
+    from datetime import datetime, timedelta
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT activated_at FROM inventory WHERE user_id = ? AND item_id = 'lucky_clover' AND activated_at IS NOT NULL",
+            (user_id,)
+        ) as cursor:
+            result = await cursor.fetchone()
+            
+        if not result:
+            return False
+        
+        activated_time = datetime.fromisoformat(result[0])
+        expiry = activated_time + timedelta(hours=1)
+        
+        # Check if still active
+        if datetime.now() > expiry:
+            # Expired - remove from inventory
+            await db.execute(
+                "UPDATE inventory SET activated_at = NULL, quantity = quantity - 1 WHERE user_id = ? AND item_id = 'lucky_clover'",
                 (user_id,)
             )
             await db.execute(

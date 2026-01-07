@@ -431,8 +431,28 @@ class Inventory(commands.Cog):
                 
                 embed = discord.Embed(
                     title="<:luckyhorseshoe:1458353830704975884> Lucky Horseshoe Activated!",
-                    description="You have **+3% win chance** on ALL gambling games for the next **24 hours**!",
+                    description="You have **+10% win chance** on ALL gambling games for the next **4 hours**!",
                     color=0xFFD700
+                )
+                return await ctx.send(embed=embed)
+
+            elif item_id == "lucky_clover":
+                # Activate lucky clover
+                await db.execute(
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                # Update activated_at in inventory instead of removing
+                await db.execute(
+                    "UPDATE inventory SET activated_at = ? WHERE user_id = ? AND item_id = ?",
+                    (datetime.now().isoformat(), ctx.author.id, item_id)
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="🍀 Lucky Clover Activated!",
+                    description="You have **+3% win chance** on ALL gambling games for the next **1 hour**!",
+                    color=0x2ECC71
                 )
                 return await ctx.send(embed=embed)
 

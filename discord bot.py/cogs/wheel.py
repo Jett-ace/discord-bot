@@ -15,7 +15,7 @@ class Wheel(commands.Cog):
         self.bot = bot
 
     @commands.command(name="wheel", aliases=["spin"])
-    @commands.cooldown(1, 6, commands.BucketType.user)
+    @commands.cooldown(1, 7, commands.BucketType.user)
     async def wheel_of_fortune(self, ctx, bet: str = None):
         """Spin the wheel of fortune!
         Usage: `gwheel <bet>` or `gwheel all`
@@ -130,8 +130,8 @@ class Wheel(commands.Cog):
                     ("💰 1.2x", 1.2, 21),       # 21% (increased from 20%)
                     ("💎 2x", 2, 25),           # 25% (increased from 24%)
                     ("💵 5x", 5, 7),            # 7% (increased from 6%)
-                    ("🌟 10x", 10, 4),          # 4% (same)
-                    ("👑 JACKPOT", 50, 1.3),    # 1.3% (0.3% increase from 1%)
+                    ("🌟 10x", 10, 3),          # 3% (reduced from 4%)
+                    ("👑 JACKPOT", 50, 2),      # 2% (increased from 1%)
                 ]
             else:
                 segments = [

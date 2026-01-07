@@ -461,10 +461,11 @@ class Daily(commands.Cog):
                     (ctx.author.id, now.isoformat(), display_streak),
                 )
                 
-                # Give random item
+                # Give random item (weighted)
                 random_items = [
-                    "lucky_dice", "streak", "shield", "lockpick", 
-                    "lucky_clover"
+                    "lucky_dice", "streak", "shield", "lockpick",
+                    "lucky_dice", "streak", "shield", "lockpick",  # Double weight for common items
+                    "lucky_clover"  # Rare
                 ]
                 random_item = random.choice(random_items)
                 

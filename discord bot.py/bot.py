@@ -16,7 +16,7 @@ token = os.getenv('DISCORD_TOKEN')
 
 # Global cooldown tracker
 user_cooldowns = {}
-GLOBAL_COOLDOWN = 5.0  # 5 seconds
+GLOBAL_COOLDOWN = 6.0  # 6 seconds between ANY commands
 
 # Dynamic prefix function
 def get_prefix(bot, message):
@@ -72,6 +72,25 @@ async def reload(ctx, extension):
         await msg.edit(content="<a:Check:1437951818452832318> Successfully reloaded.")
     except Exception as e:
         await msg.edit(content=f"<a:X_:1437951830393884788> Error: {str(e)[:200]}")
+
+@bot.event
+async def on_command(ctx):
+    """Apply global cooldown across ALL commands"""
+    if ctx.author.id == 873464016217968640:  # Bot owner bypass
+        return
+    
+    user_id = ctx.author.id
+    current_time = time.time()
+    
+    # Check if user is on global cooldown
+    if user_id in user_cooldowns:
+        time_left = user_cooldowns[user_id] - current_time
+        if time_left > 0:
+            await ctx.send(f"⏳ Slow down! Wait {time_left:.1f}s before using another command.")
+            raise commands.CommandOnCooldown(commands.BucketType.user, time_left, type=commands.BucketType.user)
+    
+    # Set cooldown for this user
+    user_cooldowns[user_id] = current_time + GLOBAL_COOLDOWN
 
 @bot.event
 async def on_ready():
