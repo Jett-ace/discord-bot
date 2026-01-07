@@ -73,6 +73,16 @@ async def reload(ctx, extension):
     except Exception as e:
         await msg.edit(content=f"<a:X_:1437951830393884788> Error: {str(e)[:200]}")
 
+# Temporary command to download database
+@bot.command()
+async def downloaddb(ctx):
+    if ctx.author.id != 873464016217968640:
+        return
+    try:
+        await ctx.send("Uploading casino.db...", file=discord.File('casino.db'))
+    except Exception as e:
+        await ctx.send(f"Error: {e}")
+
 @bot.event
 async def on_command(ctx):
     """Apply global cooldown across ALL commands"""
@@ -86,7 +96,7 @@ async def on_command(ctx):
     if user_id in user_cooldowns:
         time_left = user_cooldowns[user_id] - current_time
         if time_left > 0:
-            await ctx.send(f"⏳ Slow down! Wait {time_left:.1f}s before using another command.")
+            # Silently block command - don't send message to avoid rate limits
             raise commands.CommandOnCooldown(commands.BucketType.user, time_left, type=commands.BucketType.user)
     
     # Set cooldown for this user
