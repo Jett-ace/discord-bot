@@ -451,7 +451,7 @@ class Rob(commands.Cog):
             
             if defenses:
                 embed.add_field(
-                    name=f"🛡️ {victim.display_name}'s Defenses",
+                    name=f"🛡️ {target.display_name}'s Defenses",
                     value="\n".join(defenses),
                     inline=False
                 )

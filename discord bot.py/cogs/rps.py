@@ -55,8 +55,8 @@ class RPS(commands.Cog):
             return
 
         # Record this play (only for non-premium)
+        user_id = ctx.author.id
         if not is_premium:
-            user_id = ctx.author.id
             now = datetime.now()
             self.rps_plays[user_id].append(now)
 

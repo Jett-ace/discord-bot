@@ -88,6 +88,20 @@ class BankUpgradeView(discord.ui.View):
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+    
+    async def cog_load(self):
+        """Initialize active_items table"""
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS active_items (
+                    user_id INTEGER,
+                    item_id TEXT,
+                    activated_at TEXT,
+                    uses_remaining INTEGER DEFAULT 0,
+                    PRIMARY KEY (user_id, item_id)
+                )
+            """)
+            await db.commit()
 
     @commands.command(name="i", aliases=["inv", "inventory", "bag"])
     async def inventory(self, ctx):
@@ -454,8 +468,17 @@ class Inventory(commands.Cog):
             elif item_id == "double_down":
                 # Activate double down card for next win
                 await db.execute(
-                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at, uses_remaining) VALUES (?, ?, ?, 1)",
                     (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                # Remove from inventory
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute(
+                    "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                    (ctx.author.id,)
                 )
                 await db.commit()
                 
@@ -469,14 +492,23 @@ class Inventory(commands.Cog):
             elif item_id == "golden_chip":
                 # Activate golden chip for next win
                 await db.execute(
-                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at, uses_remaining) VALUES (?, ?, ?, 1)",
                     (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                # Remove from inventory
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute(
+                    "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                    (ctx.author.id,)
                 )
                 await db.commit()
                 
                 embed = discord.Embed(
                     title="<:goldenchip:1457964285207646264> Golden Chip Activated!",
-                    description="Your next coinflip win will get **+30% bonus**!",
+                    description="Your next coinflip or blackjack win will get **+30% bonus**!",
                     color=0xFFD700
                 )
                 return await ctx.send(embed=embed)
@@ -484,8 +516,17 @@ class Inventory(commands.Cog):
             elif item_id == "rigged_deck":
                 # Activate rigged deck for next blackjack
                 await db.execute(
-                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at, uses_remaining) VALUES (?, ?, ?, 1)",
                     (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                # Remove from inventory
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute(
+                    "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                    (ctx.author.id,)
                 )
                 await db.commit()
                 
@@ -499,8 +540,17 @@ class Inventory(commands.Cog):
             elif item_id == "card_counter":
                 # Activate card counter for next blackjack
                 await db.execute(
-                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at, uses_remaining) VALUES (?, ?, ?, 1)",
                     (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                # Remove from inventory
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute(
+                    "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                    (ctx.author.id,)
                 )
                 await db.commit()
                 
@@ -513,3 +563,7 @@ class Inventory(commands.Cog):
 
             else:
                 return await ctx.send(f"<a:X_:1437951830393884788> **{item['name']}** cannot be used.")
+
+
+async def setup(bot):
+    await bot.add_cog(Inventory(bot))

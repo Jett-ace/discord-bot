@@ -1,4 +1,5 @@
 """Bank System - Loans, penalties, and global bank tracking"""
+import asyncio
 import discord
 from discord.ext import commands, tasks
 import aiosqlite
@@ -450,6 +451,7 @@ class Bank(commands.Cog):
             await db.commit()
     
     @commands.command(name="bal", aliases=["balance", "wallet"])
+    @commands.cooldown(1, 5, commands.BucketType.user)
     async def balance(self, ctx):
         """Check your wallet balance and bank deposits"""
         if not await require_enrollment(ctx):
@@ -505,9 +507,24 @@ class Bank(commands.Cog):
                 )
             
             await send_embed(ctx, embed)
+        except discord.HTTPException as e:
+            if e.status == 429:
+                # Rate limited - don't try to send another message
+                print(f"Rate limited in balance command: {e}")
+            else:
+                print(f"HTTP error in balance command: {e}")
+                # Only try to send error message if not rate limited
+                try:
+                    await asyncio.sleep(1)  # Brief delay before retry
+                    await ctx.send("<a:X_:1437951830393884788> Error retrieving balance.")
+                except:
+                    pass  # Silently fail if error message also fails
         except Exception as e:
             print(f"Error in balance command: {e}")
-            await ctx.send("<a:X_:1437951830393884788> Error retrieving balance.")
+            try:
+                await ctx.send("<a:X_:1437951830393884788> Error retrieving balance.")
+            except:
+                pass  # Silently fail if error message fails
     
     @commands.command(name="bank")
     async def bank_info(self, ctx):

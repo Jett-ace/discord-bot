@@ -16,7 +16,7 @@ token = os.getenv('DISCORD_TOKEN')
 
 # Global cooldown tracker
 user_cooldowns = {}
-GLOBAL_COOLDOWN = 3.0  # 3 seconds
+GLOBAL_COOLDOWN = 5.0  # 5 seconds
 
 # Dynamic prefix function
 def get_prefix(bot, message):

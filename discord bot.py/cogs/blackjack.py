@@ -69,8 +69,12 @@ class BlackjackView(discord.ui.View):
     def embed(self, reveal_dealer=False, note="", color: int = 0x1abc9c):
         # Show dealer's hidden card if card counter is active and not yet used
         if self.card_counter_active and not self.card_counter_used and not reveal_dealer:
-            dealer_display = f"{self.card_str(self.dealer)} 🃏"
-            dealer_value = f"{hand_value(self.dealer)} (Card Counter)"
+            # Card Counter: Show both dealer cards and their value
+            dealer_display = self.card_str(self.dealer)
+            dealer_value = f"{hand_value(self.dealer)} <a:counter:1458347417329209426> **CARD COUNTER ACTIVE**"
+            self.card_counter_used = True  # Mark as used after showing
+            if not note:
+                note = "Card Counter: Dealer's cards revealed!"
         else:
             dealer_display = self.card_str(self.dealer) if reveal_dealer else f"`{self.dealer[0]}` ??"
             dealer_value = str(hand_value(self.dealer)) if reveal_dealer else "??"
@@ -97,9 +101,9 @@ class BlackjackView(discord.ui.View):
             return
         self.finished = True
         
-        # Check for Golden Chip (adds +0.3x to winnings)
-        from utils.database import has_inventory_item, consume_inventory_item
-        has_chip = await has_inventory_item(self.ctx.author.id, "golden_chip")
+        # Check for Golden Chip (adds +30% to profit)
+        from utils.database import has_active_item, consume_active_item, consume_inventory_item
+        has_chip = await has_active_item(self.ctx.author.id, "golden_chip")
         
         chip_bonus = 0
         if has_chip > 0 and payouts > self._original_reserved:
@@ -107,8 +111,9 @@ class BlackjackView(discord.ui.View):
             profit = payouts - self._original_reserved
             chip_bonus = int(profit * 0.3)
             payouts += chip_bonus
+            await consume_active_item(self.ctx.author.id, "golden_chip")
             await consume_inventory_item(self.ctx.author.id, "golden_chip")
-            note += f" Golden Chip: +{chip_bonus:,} Mora!"
+            note += f" <:goldenchip:1457964285207646264> Golden Chip: +{chip_bonus:,} Mora!"
         
         # credit payouts
         try:
@@ -538,7 +543,15 @@ class Blackjack(commands.Cog):
                 return await ctx.send(embed=embed)
             
             MIN_BET = 1_000
-            MAX_BET = 15_000_000
+            
+            # Check premium status for higher bet limit
+            premium_cog = self.bot.get_cog('Premium')
+            is_premium = False
+            if premium_cog:
+                is_premium = await premium_cog.is_premium(ctx.author.id)
+            
+            # Premium: 20M max, Normal: 15M max
+            MAX_BET = 20_000_000 if is_premium else 15_000_000
             
             data = await get_user_data(ctx.author.id)
             balance = data.get('mora', 0)

@@ -181,8 +181,17 @@ class HiLo(commands.Cog):
         if bet_amount < 100:
             return await ctx.send("❌ Minimum bet is 100 mora!")
         
-        if bet_amount > 100000:
-            return await ctx.send("❌ Maximum bet is 100,000 mora!")
+        # Check premium status for higher bet limit
+        premium_cog = self.bot.get_cog('Premium')
+        is_premium = False
+        if premium_cog:
+            is_premium = await premium_cog.is_premium(ctx.author.id)
+        
+        # Premium: 1M, Normal: 100K
+        max_bet = 1_000_000 if is_premium else 100_000
+        
+        if bet_amount > max_bet:
+            return await ctx.send(f"❌ Maximum bet is {max_bet:,} mora!")
         
         # Check balance
         async with aiosqlite.connect(DB_PATH) as db:

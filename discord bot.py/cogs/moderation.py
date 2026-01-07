@@ -1477,6 +1477,38 @@ class Moderation(commands.Cog):
         except Exception:
             cooldown_info.append("<a:arrow:1437968863026479258> **Next RPS:** Ready")
 
+        # Check Sybau cooldown (booster only)
+        try:
+            admin_cog = self.bot.get_cog("Admin")
+            if admin_cog and hasattr(admin_cog, "sybau_cooldowns"):
+                cooldown_key = f"{ctx.guild.id}_{ctx.author.id}"
+                if cooldown_key in admin_cog.sybau_cooldowns:
+                    last_used = admin_cog.sybau_cooldowns[cooldown_key]
+                    time_passed = (dt.utcnow() - last_used).total_seconds()
+                    cooldown_seconds = 15 * 60  # 15 minutes
+                    
+                    if time_passed >= cooldown_seconds:
+                        cooldown_info.append(
+                            "<a:arrow:1437968863026479258> **Next Sybau:** Ready"
+                        )
+                    else:
+                        remaining = int(cooldown_seconds - time_passed)
+                        minutes = remaining // 60
+                        seconds = remaining % 60
+                        cooldown_info.append(
+                            f"<a:arrow:1437968863026479258> **Next Sybau:** {minutes}m {seconds}s"
+                        )
+                else:
+                    cooldown_info.append(
+                        "<a:arrow:1437968863026479258> **Next Sybau:** Ready"
+                    )
+            else:
+                cooldown_info.append(
+                    "<a:arrow:1437968863026479258> **Next Sybau:** Ready"
+                )
+        except Exception:
+            cooldown_info.append("<a:arrow:1437968863026479258> **Next Sybau:** Ready")
+
         embed.description = "\n".join(cooldown_info)
 
         await ctx.send(embed=embed)

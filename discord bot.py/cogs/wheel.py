@@ -15,6 +15,7 @@ class Wheel(commands.Cog):
         self.bot = bot
 
     @commands.command(name="wheel", aliases=["spin"])
+    @commands.cooldown(1, 6, commands.BucketType.user)
     async def wheel_of_fortune(self, ctx, bet: str = None):
         """Spin the wheel of fortune!
         Usage: `gwheel <bet>` or `gwheel all`
@@ -31,7 +32,15 @@ class Wheel(commands.Cog):
         """
         try:
             MIN_BET = 1_000
-            MAX_BET = 200_000
+            
+            # Check premium status for higher bet limit
+            premium_cog = self.bot.get_cog('Premium')
+            is_premium = False
+            if premium_cog:
+                is_premium = await premium_cog.is_premium(ctx.author.id)
+            
+            # Premium: 1M, Normal: 200K
+            MAX_BET = 1_000_000 if is_premium else 200_000
 
             # Show help embed if no bet provided
             if bet is None:
@@ -69,10 +78,10 @@ class Wheel(commands.Cog):
                 return await ctx.send(embed=embed)
 
             data = await get_user_data(ctx.author.id)
-            mora = data.get("mora", 0)
+            mora = int(data.get("mora", 0))
 
             if isinstance(bet, str) and bet.lower() == "all":
-                bet_amount = min(mora, MAX_BET)
+                bet_amount = int(min(mora, MAX_BET))
                 if bet_amount < MIN_BET:
                     await ctx.send(
                         f"<a:X_:1437951830393884788> You need at least {MIN_BET:,} <:mora:1437958309255577681> to play."

@@ -34,7 +34,16 @@ class Slots(commands.Cog):
             unlimited = await has_unlimited_game(ctx.author.id, "slots")
             
             MIN_BET = 1_000
-            MAX_BET = 200_000 if not unlimited else float('inf')
+            # Check premium status for higher bet limit
+            premium_cog = self.bot.get_cog('Premium')
+            is_premium = False
+            if premium_cog:
+                is_premium = await premium_cog.is_premium(ctx.author.id)
+            
+            # Premium: 1M, Normal: 200K, Unlimited: No limit
+            MAX_BET = 1_000_000 if is_premium else 200_000
+            if unlimited:
+                MAX_BET = float('inf')
 
             # Parse bet
             data = await get_user_data(ctx.author.id)

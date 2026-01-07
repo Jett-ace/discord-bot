@@ -5,7 +5,9 @@ Usage: from utils.embed import send_embed
 
 The helper will skip adding the thumbnail for the `my_card_info` command (alias `mci`).
 """
+import asyncio
 from typing import Any
+import discord
 
 
 def create_progress_bar(current: float, total: float, segments: int = 15) -> str:
@@ -65,10 +67,12 @@ async def send_embed(ctx: Any, embed: Any = None, **kwargs):
     Skips thumbnailing for the `my_card_info` command.
     All kwargs are forwarded to ctx.send.
     Returns whatever ctx.send returns.
+    
+    Includes rate limit handling with exponential backoff.
     """
     # If no embed provided, just forward
     if embed is None:
-        return await ctx.send(**kwargs)
+        return await _send_with_retry(ctx, **kwargs)
 
     # determine command name if available
     cmd_name = None
@@ -93,4 +97,41 @@ async def send_embed(ctx: Any, embed: Any = None, **kwargs):
         except Exception:
             pass
 
-    return await ctx.send(embed=embed, **kwargs)
+    return await _send_with_retry(ctx, embed=embed, **kwargs)
+
+
+async def _send_with_retry(ctx: Any, max_retries: int = 3, **kwargs):
+    """Send a message with exponential backoff retry on rate limits.
+    
+    Args:
+        ctx: Command context
+        max_retries: Maximum number of retry attempts
+        **kwargs: Arguments to pass to ctx.send
+        
+    Returns:
+        Message object if successful, None if all retries failed
+    """
+    for attempt in range(max_retries):
+        try:
+            return await ctx.send(**kwargs)
+        except discord.HTTPException as e:
+            # Handle rate limit (429) errors
+            if e.status == 429:
+                if attempt < max_retries - 1:
+                    # Extract retry_after from error response if available
+                    retry_after = getattr(e, 'retry_after', None) or (2 ** attempt)
+                    print(f"Rate limited, retrying after {retry_after}s (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(retry_after)
+                    continue
+                else:
+                    # Final attempt failed, silently fail to avoid spam
+                    print(f"Rate limit exceeded after {max_retries} attempts, giving up")
+                    return None
+            else:
+                # Non-rate-limit HTTP error, raise it
+                raise
+        except Exception as e:
+            # Other errors, raise them
+            raise
+    
+    return None
