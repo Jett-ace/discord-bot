@@ -3,15 +3,15 @@ import datetime
 import discord
 from discord.ext import commands
 from config import MAX_WISHES, RESET_TIME
-from utils.constants import characters, rarity_weights
+from utils.constants import characters, rarity_weights, rarity_emojis
 from utils.database import (
     get_user_data, update_user_data, save_pull,
     load_user_wish, save_user_wish, reset_wishes,
-    add_account_exp, award_achievement
+    add_account_exp, award_achievement, require_enrollment
 )
 from utils.embed import send_embed
 
-WISH_EXP = 50
+WISH_ACCOUNT_EXP = 20  # Account EXP per pull
 
 class Gacha(commands.Cog):
     def __init__(self, bot):
@@ -83,9 +83,17 @@ class Gacha(commands.Cog):
         # Save data
         await save_user_wish(ctx.author.id, user_data["count"], user_data["reset"], user_data["pity"])
         
-        # Give EXP
+        # Award account EXP for pulling
         try:
-            await add_account_exp(ctx.author.id, actual * WISH_EXP, source='wish')
+            await add_account_exp(ctx.author.id, actual * WISH_ACCOUNT_EXP, source='wish')
+        except:
+            pass
+        
+        # Update quest progress
+        try:
+            quests_cog = self.bot.get_cog('Quests')
+            if quests_cog:
+                await quests_cog.update_quest_progress(ctx.author.id, 'wish', actual)
         except:
             pass
 
@@ -94,14 +102,10 @@ class Gacha(commands.Cog):
         for idx, (char, res_text) in enumerate(pull_results, 1):
             char_name = char.get('name', 'Unknown')
             rarity = char.get('rarity', '')
+            servant_class = char.get('class', 'Unknown')
             
-            # Rarity indicator text
-            if rarity == '5★':
-                rarity_text = '5★'
-            elif rarity == '4★':
-                rarity_text = '4★'
-            else:
-                rarity_text = '3★'
+            # Get custom emoji for rarity
+            rarity_emoji = rarity_emojis.get(rarity, rarity)
             
             # Check if it was a duplicate (has "relic" in result text)
             if "relic" in res_text.lower():
@@ -109,24 +113,26 @@ class Gacha(commands.Cog):
             else:
                 detail_text = f"New!"
             
-            results_lines.append(f"**{idx}.** {rarity_text} **{char_name}**\n{detail_text}")
+            results_lines.append(f"**{idx}.** {rarity_emoji} **{char_name}**\n{detail_text}")
         
         pity_count = user_data['pity']
         description = "\n\n".join(results_lines)
-        description += f"\n\nPulls until guaranteed 5★: **{pity_count}/100**"
+        description += f"\n\nPulls until guaranteed SSR: **{pity_count}/100**"
         
         if len(description) > 4000:
             description = description[:4000] + "\n...and more!"
 
-        card_word = "card" if actual == 1 else "cards"
-        title = f"{ctx.author.display_name} pulled {actual} {card_word}"
+        servant_word = "Servant" if actual == 1 else "Servants"
+        title = f"{ctx.author.display_name} summoned {actual} {servant_word}"
         embed = discord.Embed(title=title, description=description)
         await send_embed(ctx, embed)
 
     @commands.command(name="wish", aliases=["w"])
     async def wish(self, ctx, *args):
+        if not await require_enrollment(ctx):
+            return
         if args:
-            await ctx.send("You can only do a single wish using !wish.")
+            await ctx.send("You can only do a single wish using gwish.")
             return
         await self.perform_wish(ctx, 1)
 

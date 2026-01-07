@@ -1,7 +1,9 @@
 import random
 import discord
 from discord.ext import commands
-from utils.database import get_user_data, update_user_data
+import aiosqlite
+from config import DB_PATH
+from utils.database import get_user_data, update_user_data, require_enrollment, track_game_stat, check_and_award_game_achievements, add_account_exp
 from utils.embed import send_embed
 
 
@@ -37,7 +39,7 @@ def hand_value(cards):
 
 
 class BlackjackView(discord.ui.View):
-    def __init__(self, ctx, initial_bet, deck, player_cards, dealer_cards, reserved_total, cog, start_balance=None):
+    def __init__(self, ctx, initial_bet, deck, player_cards, dealer_cards, reserved_total, cog, start_balance=None, card_counter_active=False):
         super().__init__(timeout=120)
         self.ctx = ctx
         self.initial_bet = int(initial_bet)
@@ -58,15 +60,24 @@ class BlackjackView(discord.ui.View):
         # starting user balance BEFORE the initial reservation (used to compute net change accurately)
         self._starting_balance = start_balance
         self.cog = cog
+        self.card_counter_active = card_counter_active
+        self.card_counter_used = False
 
     def card_str(self, cards):
         return " ".join(f"`{c}`" for c in cards)
 
     def embed(self, reveal_dealer=False, note="", color: int = 0x1abc9c):
-        dealer_display = self.card_str(self.dealer) if reveal_dealer else f"`{self.dealer[0]}` ??"
+        # Show dealer's hidden card if card counter is active and not yet used
+        if self.card_counter_active and not self.card_counter_used and not reveal_dealer:
+            dealer_display = f"{self.card_str(self.dealer)} 🃏"
+            dealer_value = f"{hand_value(self.dealer)} (Card Counter)"
+        else:
+            dealer_display = self.card_str(self.dealer) if reveal_dealer else f"`{self.dealer[0]}` ??"
+            dealer_value = str(hand_value(self.dealer)) if reveal_dealer else "??"
+        
         e = discord.Embed(title="Blackjack", color=color)
         e.set_author(name=self.ctx.author.display_name, icon_url=self.ctx.author.display_avatar.url)
-        e.add_field(name="Dealer", value=f"{dealer_display}\nValue: {hand_value(self.dealer) if reveal_dealer else '??'}", inline=False)
+        e.add_field(name="Dealer", value=f"{dealer_display}\nValue: {dealer_value}", inline=False)
         # show all player hands, highlight current
         for idx, h in enumerate(self.hands):
             val = hand_value(h["cards"]) if h["cards"] else 0
@@ -85,6 +96,20 @@ class BlackjackView(discord.ui.View):
         if self.finished:
             return
         self.finished = True
+        
+        # Check for Golden Chip (adds +0.3x to winnings)
+        from utils.database import has_inventory_item, consume_inventory_item
+        has_chip = await has_inventory_item(self.ctx.author.id, "golden_chip")
+        
+        chip_bonus = 0
+        if has_chip > 0 and payouts > self._original_reserved:
+            # Only apply to wins (when payout exceeds original bet)
+            profit = payouts - self._original_reserved
+            chip_bonus = int(profit * 0.3)
+            payouts += chip_bonus
+            await consume_inventory_item(self.ctx.author.id, "golden_chip")
+            note += f" Golden Chip: +{chip_bonus:,} Mora!"
+        
         # credit payouts
         try:
             data = await get_user_data(self.ctx.author.id)
@@ -352,8 +377,8 @@ class BlackjackView(discord.ui.View):
             is_dealer_blackjack = (len(self.dealer) == 2 and dv == 21)
 
             if is_player_blackjack and not is_dealer_blackjack:
-                # 3:2 payout on stake
-                payout = int(stake * 2.5)
+                # Reduced payout: 2.2x instead of 2.5x
+                payout = int(stake * 2.2)
             elif pv > 21:
                 payout = 0
             elif dv > 21:
@@ -368,6 +393,18 @@ class BlackjackView(discord.ui.View):
             total_payout += int(payout)
         # compute total to credit (immediate-awards + payouts for non-awarded hands)
         total_to_credit = int(self._immediate_awarded) + int(total_payout)
+        
+        # Check for Double Down Card (2x winnings on net profit)
+        from utils.database import has_active_item, consume_active_item, consume_inventory_item
+        has_double = await has_active_item(self.ctx.author.id, "double_down")
+        double_bonus = 0
+        if has_double > 0 and total_to_credit > self.reserved_total:
+            # Only double the profit, not the returned bet
+            profit = total_to_credit - self.reserved_total
+            double_bonus = profit  # Double the profit
+            total_to_credit += double_bonus
+            await consume_active_item(self.ctx.author.id, "double_down")
+            await consume_inventory_item(self.ctx.author.id, "double_down")
 
         # compute net change relative to the starting balance (before any reservation/deductions)
         # fetch current balance (this reflects any immediate deductions/returns that happened during play)
@@ -380,11 +417,35 @@ class BlackjackView(discord.ui.View):
         # net after we credit total_to_credit
         net = (current_balance + total_to_credit) - int(self._starting_balance or 0)
         if net > 0:
-            msg = f"You won! You gained {net:,} <:mora:1437958309255577681>."
+            msg = f"You won! You gained {net:,} Mora."
+            if double_bonus > 0:
+                msg += f" 💳 **DOUBLE DOWN!** +{double_bonus:,} bonus!"
         elif net < 0:
-            msg = f"Loss {abs(net):,} <:mora:1437958309255577681>. Better luck next time."
+            msg = f"Loss {abs(net):,}. Better luck next time."
         else:
             msg = "Push - no net gain or loss."
+
+        # Track stats and award XP for wins
+        if net > 0:
+            try:
+                await track_game_stat(self.ctx.author.id, "blackjack_wins")
+                await track_game_stat(self.ctx.author.id, "blackjack_plays")
+                await check_and_award_game_achievements(self.ctx.author.id, self.cog.bot, self.ctx)
+                
+                # Award XP (80 XP for blackjack win)
+                exp_reward = 80
+                leveled_up, new_level, old_level = await add_account_exp(self.ctx.author.id, exp_reward)
+                msg += f" (+{exp_reward} XP)"
+                if leveled_up:
+                    msg += f"\n**Level Up!** You reached level {new_level}!"
+            except Exception as e:
+                print(f"Error tracking blackjack stats: {e}")
+        else:
+            # Track play stat even on loss/push
+            try:
+                await track_game_stat(self.ctx.author.id, "blackjack_plays")
+            except Exception:
+                pass
 
         # If invoked from an interaction, acknowledge it so Discord doesn't complain
         if interaction:
@@ -396,14 +457,42 @@ class BlackjackView(discord.ui.View):
         # choose color: purple for net win, crimson for loss, default gray for push
         if net > 0:
             color = 0x9b59b6
-            msg = f"You won! You gained {net:,} Mora."
         elif net < 0:
             color = 0xDC143C
-            msg = f"Loss {abs(net):,} Mora. Better luck next time."
         else:
             color = 0x95a5a6
-            msg = "Push - no net gain or loss."
 
+        # Add loss to global bank and apply discounts
+        if net < 0:
+            try:
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute(
+                        "UPDATE global_bank SET balance = balance + ? WHERE id = 1",
+                        (abs(net),)
+                    )
+                    await db.commit()
+            except Exception as e:
+                print(f"Error adding loss to bank: {e}")
+            
+            # Check for Hot Streak Card (50% refund on loss)
+            from utils.database import has_active_item, consume_active_item
+            has_hot = await has_active_item(self.ctx.author.id, "streak")
+            if has_hot > 0:
+                refund = int(abs(net) * 0.5)
+                await consume_active_item(self.ctx.author.id, "streak")
+                # Credit the refund
+                data = await get_user_data(self.ctx.author.id)
+                data['mora'] += refund
+                await update_user_data(self.ctx.author.id, mora=data['mora'])
+                msg += f" | Hot Streak: +{refund:,} refund"
+            
+            # Apply golden card cashback (10%)
+            bank_cog = self.cog.bot.get_cog('Bank')
+            if bank_cog:
+                cashback = await bank_cog.apply_golden_cashback(self.ctx.author.id, abs(net))
+                if cashback > 0:
+                    msg += f" +{cashback:,} cashback (Gold Card)"
+        
         # End the game: credit the total_to_credit (handled inside end_game) and show the concise result
         await self.end_game(msg, total_to_credit, color=color)
 
@@ -415,41 +504,75 @@ class Blackjack(commands.Cog):
         self.active_games = set()
 
     @commands.command(name="blackjack", aliases=["bj"])
-    async def blackjack(self, ctx, bet: str):
-        """Play a quick blackjack round. Usage: !blackjack <amount|all>
-        Min bet: 1,000 | Max bet: 200,000"""
+    async def blackjack(self, ctx, bet: str = None):
+        """Play blackjack! Bet mora and try to beat the dealer by getting closer to 21 without going over.
+        
+        Usage: gblackjack <amount> or gbj <amount>
+        Example: gbj 5000 or gbj all
+        
+        Min bet: 1,000 | Max bet: 15,000,000
+        
+        Actions:
+        - Hit - Draw another card
+        - Stand - Keep your hand
+        - Double - Double your bet and draw one card
+        - Split - Split matching cards into two hands
+        - Surrender - Give up and get half your bet back"""
+        if not await require_enrollment(ctx):
+            return
         try:
+            # Check if user has unlimited betting
+            from utils.database import has_unlimited_game
+            unlimited = await has_unlimited_game(ctx.author.id, "blackjack")
+            
+            if bet is None:
+                limit_text = "No limit" if unlimited else f"Max: {200_000:,} Mora"
+                embed = discord.Embed(
+                    title="❌ Missing Bet Amount",
+                    description="You need to specify how much you want to bet!",
+                    color=0xE74C3C
+                )
+                embed.add_field(name="Usage", value="`gbj <amount>` or `gbj all`", inline=False)
+                embed.add_field(name="Examples", value="`gbj 5000`\n`gbj 10000`\n`gbj all`", inline=False)
+                embed.add_field(name="Limits", value=f"Min: {1_000:,} Mora\n{limit_text}", inline=False)
+                return await ctx.send(embed=embed)
+            
             MIN_BET = 1_000
-            MAX_BET = 200_000
+            MAX_BET = 15_000_000
             
             data = await get_user_data(ctx.author.id)
             balance = data.get('mora', 0)
 
             if bet.lower() == 'all':
-                amount = min(balance, MAX_BET)  # Cap at max bet
+                amount = balance
+                # Cap at MAX_BET even for 'all'
+                if amount > MAX_BET:
+                    amount = MAX_BET
                 if amount < MIN_BET:
-                    await ctx.send(f"You need at least {MIN_BET:,} <:mora:1437958309255577681> to play.")
+                    await ctx.send(f"<a:X_:1437951830393884788> You need at least {MIN_BET:,} <:mora:1437958309255577681> to play.")
                     return
             else:
                 try:
                     amount = int(bet.replace(',',''))
                 except Exception:
-                    await ctx.send("Invalid bet amount.")
+                    await ctx.send("<a:X_:1437951830393884788> Invalid bet amount.")
                     return
 
             if amount < MIN_BET:
                 await ctx.send(f"Minimum bet is {MIN_BET:,} <:mora:1437958309255577681>.")
                 return
+            
             if amount > MAX_BET:
-                await ctx.send(f"Maximum bet is {MAX_BET:,} <:mora:1437958309255577681>.")
+                await ctx.send(f"<a:X_:1437951830393884788> Maximum bet is {MAX_BET:,} <:mora:1437958309255577681>.")
                 return
+            
             if amount > balance:
                 await ctx.send("You don't have enough Mora for that bet.")
                 return
 
             # prevent concurrent games
             if ctx.author.id in self.active_games:
-                await ctx.send("You already have an active Blackjack game.")
+                await ctx.send("⏳ You already have an active Blackjack game.")
                 return
 
             # reserve bet immediately
@@ -459,6 +582,46 @@ class Blackjack(commands.Cog):
             # mark active
             self.active_games.add(ctx.author.id)
 
+            # Check for Rigged Deck item (guaranteed blackjack)
+            from utils.database import has_active_item, consume_active_item, consume_inventory_item
+            has_rigged = await has_active_item(ctx.author.id, "rigged_deck")
+            
+            if has_rigged > 0:
+                # Consume rigged deck and give instant blackjack win
+                await consume_active_item(ctx.author.id, "rigged_deck")
+                await consume_inventory_item(ctx.author.id, "rigged_deck")
+                payout = int(amount * 2.2)
+                try:
+                    data = await get_user_data(ctx.author.id)
+                    data['mora'] += payout
+                    await update_user_data(ctx.author.id, mora=data['mora'])
+                except Exception as e:
+                    print(f"Error crediting blackjack payout: {e}")
+
+                # Track stats
+                try:
+                    await track_game_stat(ctx.author.id, "blackjack_wins")
+                    await track_game_stat(ctx.author.id, "blackjack_plays")
+                    await track_game_stat(ctx.author.id, "blackjack_naturals")
+                    await check_and_award_game_achievements(ctx.author.id, self.bot, ctx)
+                except Exception:
+                    pass
+
+                e = discord.Embed(
+                    title=f"<a:deck:1457965675082551306> Rigged Deck - Blackjack!", 
+                    description=f"**Rigged Deck guaranteed win!** +{payout:,} <:mora:1437958309255577681>",
+                    color=0xF1C40F
+                )
+                e.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                e.add_field(name="Dealer", value="?? ??\nValue: ??", inline=False)
+                e.add_field(name="You", value="A\u2660 K\u2665\nValue: 21\nStake: {:,}".format(amount), inline=False)
+                self.active_games.discard(ctx.author.id)
+                return await send_embed(ctx, e)
+
+            # Check for Card Counter (reveals dealer's hidden card)
+            has_counter = await has_active_item(ctx.author.id, "card_counter")
+            card_counter_active = has_counter > 0
+            
             # prepare deck and hands
             deck = make_deck()
             random.shuffle(deck)
@@ -469,9 +632,8 @@ class Blackjack(commands.Cog):
             pv = hand_value(player_cards)
             dv = hand_value(dealer_cards)
             if pv == 21:
-                # immediate player blackjack: pay 3:2 on the stake (casino standard)
-                # payout is amount + 1.5 * amount = 2.5 * amount total returned
-                payout = int(amount * 2.5)
+                # immediate player blackjack: reduced payout (2.2x instead of 2.5x)
+                payout = int(amount * 2.2)
                 try:
                     data = await get_user_data(ctx.author.id)
                     data['mora'] += payout
@@ -480,10 +642,13 @@ class Blackjack(commands.Cog):
                     print(f"Error crediting blackjack payout: {e}")
 
                 # build purple win embed and end game immediately
-                e = discord.Embed(title=f"Blackjack - {ctx.author.display_name}", color=0x9b59b6)
+                e = discord.Embed(
+                    title=f"Blackjack - {ctx.author.display_name}", 
+                    description=f"**Lucky blackjack!** You win {payout:,} <:mora:1437958309255577681>",
+                    color=0x9b59b6
+                )
                 e.add_field(name="Dealer", value=f"`{dealer_cards[0]}` `{dealer_cards[1]}`\nValue: {dv}", inline=False)
                 e.add_field(name="You", value=f"`{player_cards[0]}` `{player_cards[1]}`\nValue: {pv}\nStake: {amount:,}", inline=False)
-                e.set_footer(text=f"Lucky blackjack! You win {payout:,} Mora.")
                 try:
                     self.active_games.discard(ctx.author.id)
                 except Exception:
@@ -493,7 +658,13 @@ class Blackjack(commands.Cog):
 
             # reserved_total initially equals the amount; further actions (double/split) will increase it
             # pass starting balance (balance before reservation) so view can compute net correctly
-            view = BlackjackView(ctx, amount, deck, player_cards, dealer_cards, reserved_total=amount, cog=self, start_balance=balance)
+            view = BlackjackView(ctx, amount, deck, player_cards, dealer_cards, reserved_total=amount, cog=self, start_balance=balance, card_counter_active=card_counter_active)
+            
+            # Consume card counter if active
+            if card_counter_active:
+                await consume_active_item(ctx.author.id, "card_counter")
+                await consume_inventory_item(ctx.author.id, "card_counter")
+            
             embed = view.embed()
             message = await send_embed(ctx, embed, view=view)
             view.message = message
@@ -501,7 +672,7 @@ class Blackjack(commands.Cog):
             from utils.logger import setup_logger
             logger = setup_logger("Blackjack")
             logger.error(f"Error in blackjack command: {e}", exc_info=True)
-            await ctx.send("❌ Failed to start the blackjack game. Please try again.")
+            await ctx.send("<a:X_:1437951830393884788> Failed to start the blackjack game. Please try again.")
 
 
 async def setup(bot):

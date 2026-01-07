@@ -1,4 +1,3 @@
-import os
 import random
 import datetime
 import discord
@@ -7,7 +6,7 @@ from utils import constants
 from utils.database import (
     get_user_pulls, insert_dispatch, get_user_active_dispatches,
     get_user_ready_dispatches, mark_dispatch_claimed, get_dispatch_by_id,
-    get_user_data, update_user_data, add_chest, add_chest_with_type
+    get_user_data, update_user_data, add_chest_with_type, require_enrollment
 )
 from utils.database import add_account_exp
 from utils.database import get_account_level, _exp_required_for_level
@@ -34,41 +33,41 @@ def _compute_chest_awards(region_name: str, rarity: str, base_chest_flag: int):
             return {k: v * 2 for k, v in vals.items()}
         return vals
 
-    if region == 'mondstadt':
+    if region == 'fuyuki':
         awards['common'] = 1
 
-    elif region == 'liyue':
+    elif region == 'orleans':
         # mostly common, small chance exquisite
-        if random.random() < CHEST_EXPLORE_CONFIG.get("liyue_exquisite_chance", 0.20):
+        if random.random() < CHEST_EXPLORE_CONFIG.get("orleans_exquisite_chance", 0.20):
             awards['exquisite'] = 1
         else:
             awards['common'] = 1
 
-    elif region in ('inazuma', 'sumeru', 'natlan'):
-    # regional probabilities (harder to get luxurious here)
+    elif region in ('septem', 'okeanos', 'london'):
+    # mid-tier singularities probabilities
         r = random.random()
-        if r < CHEST_EXPLORE_CONFIG.get("inazuma_lux_threshold", 0.10):
+        if r < CHEST_EXPLORE_CONFIG.get("mid_lux_threshold", 0.10):
             awards['luxurious'] = 1
-        elif r < CHEST_EXPLORE_CONFIG.get("inazuma_precious_threshold", 0.40):
+        elif r < CHEST_EXPLORE_CONFIG.get("mid_precious_threshold", 0.40):
             awards['precious'] = 1
-        elif r < CHEST_EXPLORE_CONFIG.get("inazuma_exquisite_threshold", 0.70):
+        elif r < CHEST_EXPLORE_CONFIG.get("mid_exquisite_threshold", 0.70):
             awards['exquisite'] = 1
         else:
             awards['common'] = 1
-        # maybe double chest drops in higher-level places
+        # maybe double chest drops in mid-level singularities
         awards = maybe_double(awards)
 
     else:
-        # Fontaine/Snezhnaya (and any other high-tier) - best rewards
+        # Camelot/Babylonia (and any other high-tier) - best rewards
         # Guarantee precious + 1 common + 1 exquisite
         awards['precious'] += 1
         awards['common'] += 1
         awards['exquisite'] += 1
     # chance to additionally grant a luxurious chest
-        if random.random() < CHEST_EXPLORE_CONFIG.get("fontaine_lux_chance", 0.40):
+        if random.random() < CHEST_EXPLORE_CONFIG.get("high_lux_chance", 0.40):
             awards['luxurious'] += 1
         # maybe double all drops
-        if random.random() < CHEST_EXPLORE_CONFIG.get("fontaine_double_chance", 0.20):
+        if random.random() < CHEST_EXPLORE_CONFIG.get("high_double_chance", 0.20):
             awards = maybe_double(awards)
 
     # Extra fate rules: precious & luxurious each guarantee 1 fate per chest
@@ -79,8 +78,37 @@ def _compute_chest_awards(region_name: str, rarity: str, base_chest_flag: int):
     for _ in range(awards.get('luxurious', 0)):
         if random.random() < lux_extra:
             extra_fates += 1
+    
+    # Award progression items based on chest rarity
+    # Rod Shards: 5% common, 10% exquisite, 15% precious, 25% luxurious
+    # Fish Bait: 10% common, 15% exquisite, 20% precious, 30% luxurious
+    items = {}
+    
+    # Calculate rod shard drops
+    rod_shard_chance = 0.05 * awards.get('common', 0) + 0.10 * awards.get('exquisite', 0) + \
+                       0.15 * awards.get('precious', 0) + 0.25 * awards.get('luxurious', 0)
+    if random.random() < rod_shard_chance:
+        # Award 1-3 shards based on rarity
+        if awards.get('luxurious', 0) > 0:
+            items['rod_shard'] = random.randint(2, 4)
+        elif awards.get('precious', 0) > 0:
+            items['rod_shard'] = random.randint(1, 3)
+        else:
+            items['rod_shard'] = 1
+    
+    # Calculate fish bait drops
+    bait_chance = 0.10 * awards.get('common', 0) + 0.15 * awards.get('exquisite', 0) + \
+                  0.20 * awards.get('precious', 0) + 0.30 * awards.get('luxurious', 0)
+    if random.random() < bait_chance:
+        # Award 1-5 bait based on rarity
+        if awards.get('luxurious', 0) > 0:
+            items['fish_bait'] = random.randint(3, 5)
+        elif awards.get('precious', 0) > 0:
+            items['fish_bait'] = random.randint(2, 4)
+        else:
+            items['fish_bait'] = random.randint(1, 2)
 
-    return awards, extra_fates
+    return awards, extra_fates, items
 
 
 class Explore(commands.Cog):
@@ -106,8 +134,6 @@ class Explore(commands.Cog):
                 acct_lvl, acct_exp, acct_needed = await get_account_level(ctx.author.id)
             except Exception:
                 acct_lvl = 0
-                acct_exp = 0
-                acct_needed = None
 
             for key, info in constants.regions.items():
                 name = info.get('name')
@@ -118,7 +144,6 @@ class Explore(commands.Cog):
                     lines.append(f"**{name}** - Level {lvl}")
 
             embed.description = "\n".join(lines)
-            embed.set_footer(text="Higher level regions give better rewards. Use: !dispatch <character> <region>")
 
             await send_embed(ctx, embed)
         except Exception as e:
@@ -126,13 +151,15 @@ class Explore(commands.Cog):
 
     @commands.group(name="dispatch", invoke_without_command=True)
     async def dispatch(self, ctx, *args):
-        """Dispatch a character on a commission. Example: `!dispatch amber mondstadt`.
+        """Dispatch a Servant on a commission. Example: `!dispatch Artoria fuyuki`.
 
         Use `!dispatch status` to list your active dispatches.
         """
+        if not await require_enrollment(ctx):
+            return
         # If called without args, show usage
         if not args:
-            await ctx.send("Usage: `!dispatch <character> <region>` (character can have spaces) or `!dispatch status` to view active dispatches.")
+            await ctx.send("Usage: `gdispatch <character> <region>` or `gdispatch status`\nExample: `gdispatch Artoria fuyuki`")
             return
 
         # Parse arguments: last token is the region, the rest (joined) is the character name
@@ -141,7 +168,7 @@ class Explore(commands.Cog):
 
     # If only one argument was provided, it's ambiguous - show usage
         if character is None or region is None:
-            await ctx.send("Usage: `!dispatch <character> <region>` (character can have spaces). Example: `!dispatch Hu Tao fontaine`")
+            await ctx.send("Usage: `!dispatch <character> <region>`\nExample: `!dispatch Artoria fuyuki`")
             return
         try:
             # normalize inputs (case-insensitive)
@@ -153,7 +180,7 @@ class Explore(commands.Cog):
 
             # check user owns the character (case-insensitive match)
             pulls = await get_user_pulls(ctx.author.id)
-            # pulls rows: (character_name, rarity, count, relics, element, hp, atk)
+            # pulls rows: (character_name, rarity, count, relics, region, hp, atk)
             found = None
             for row in pulls:
                 name = row[0]
@@ -162,7 +189,7 @@ class Explore(commands.Cog):
                     break
 
             if not found:
-                await ctx.send("You don't own that character. Pull them first to dispatch them.")
+                await ctx.send("You don't own that character.")
                 return
 
             # Enforce per-user active dispatch limit (max 5)
@@ -172,7 +199,7 @@ class Explore(commands.Cog):
             except Exception:
                 active_count = 0
             if active_count >= 5:
-                await ctx.send("You already have 5 active dispatches. Claim or cancel one before starting another.")
+                await ctx.send("Max 5 dispatches active. Claim or cancel one first.")
                 return
 
             # Prevent sending the same character if they already have an active dispatch
@@ -184,23 +211,22 @@ class Explore(commands.Cog):
                     await ctx.send(f"{found[0]} is already on an active dispatch and cannot be sent again until they return.")
                     return
 
-            rarity = found[1] or "3★"
+            rarity = found[1] or "R"
             region_info = constants.regions[region_key]
             region_level = region_info['level']
 
             # enforce per-region unlock level based on account progression
             try:
-                acct_lvl, acct_exp, acct_needed = await get_account_level(ctx.author.id)
+                acct_lvl, acct_exp, _ = await get_account_level(ctx.author.id)
             except Exception:
                 acct_lvl, acct_exp = 0, 0
-                acct_needed = None
             if acct_lvl < int(region_level):
                 # compute estimated EXP required to reach region_level
                 try:
                     remaining_to_next = max(0, (await _exp_required_for_level(acct_lvl)) - acct_exp)
                     total_needed = remaining_to_next
-                    for l in range(acct_lvl + 1, int(region_level)):
-                        total_needed += await _exp_required_for_level(l)
+                    for level in range(acct_lvl + 1, int(region_level)):
+                        total_needed += await _exp_required_for_level(level)
                 except Exception:
                     total_needed = None
 
@@ -209,7 +235,6 @@ class Explore(commands.Cog):
                 if total_needed is not None:
                     desc += f"\nEstimated EXP needed to unlock: {total_needed:,}."
                 embed = discord.Embed(title=title, description=desc, color=0xe67e22)
-                embed.set_footer(text="Gain EXP by completing wishes and activities to unlock new regions.")
                 await send_embed(ctx, embed)
                 return
 
@@ -234,9 +259,9 @@ class Explore(commands.Cog):
             end = start + datetime.timedelta(seconds=duration_seconds)
 
             # rarity multiplier
-            if '5' in rarity:
+            if rarity == 'SSR':
                 rmul = 2.0
-            elif '4' in rarity:
+            elif rarity == 'SR':
                 rmul = 1.5
             else:
                 rmul = 1.0
@@ -262,7 +287,7 @@ class Explore(commands.Cog):
             chest_award = 1 if random.random() < chest_prob else 0
 
             # insert dispatch record with precomputed rewards
-            dispatch_id = await insert_dispatch(
+            await insert_dispatch(
                 ctx.author.id,
                 found[0],
                 region_info['name'],
@@ -304,7 +329,6 @@ class Explore(commands.Cog):
             # Show immediate EXP awarded for starting this dispatch (if any)
             if start_exp and start_exp > 0:
                 embed.add_field(name="Progress", value=f"+{start_exp:,} EXP (start)", inline=False)
-            embed.set_footer(text="Use !dispatch status to view your dispatches")
 
             await send_embed(ctx, embed)
         except Exception as e:
@@ -342,7 +366,7 @@ class Explore(commands.Cog):
             # If a number was provided, use that
             if dispatch_number is not None:
                 if dispatch_number < 1 or dispatch_number > len(combined_sorted):
-                    await ctx.send(f"Invalid dispatch number. Use !dispatch status to see your dispatches.")
+                    await ctx.send("Invalid dispatch number. Use !dispatch status to see your dispatches.")
                     return
                 
                 row, is_ready = combined_sorted[dispatch_number - 1]  # Convert to 0-indexed
@@ -377,7 +401,6 @@ class Explore(commands.Cog):
                 rarity = row[4] if len(row) > 4 else None
                 mora_reward = row[7] or 0
                 dust_reward = row[8] or 0
-                fates_reward = row[9] or 0
                 chest_award = row[10] or 0
 
                 # mark claimed then apply rewards
@@ -399,7 +422,7 @@ class Explore(commands.Cog):
                 new_mora = data.get('mora', 0) + mora_reward
                 new_dust = data.get('dust', 0) + dust_reward
                 # compute chest-type awards and extra fates based on region
-                chest_awards, extra_fates = _compute_chest_awards(region_name, rarity, chest_award)
+                chest_awards, extra_fates, chest_items = _compute_chest_awards(region_name, rarity, chest_award)
                 # fates are only awarded from chests now (extra_fates); ignore direct fates_reward
                 total_fates = data.get('fates', 0) + extra_fates
                 await update_user_data(ctx.author.id, mora=new_mora, dust=new_dust, fates=total_fates)
@@ -410,6 +433,15 @@ class Explore(commands.Cog):
                             await add_chest_with_type(ctx.author.id, ctype, amt)
                         except Exception:
                             print(f"Failed to award {amt}x {ctype} chest(s) to user {ctx.author.id}")
+                
+                # award progression items from chests
+                for item_key, amt in chest_items.items():
+                    if amt and amt > 0:
+                        try:
+                            from utils.database import add_user_item
+                            await add_user_item(ctx.author.id, item_key, amt)
+                        except Exception:
+                            print(f"Failed to award {amt}x {item_key} to user {ctx.author.id}")
 
                 # award account EXP for completing the dispatch (region-based)
                 dispatch_exp = 0
@@ -431,6 +463,14 @@ class Explore(commands.Cog):
                 except Exception:
                     pass
 
+                # Update quest progress
+                try:
+                    quests_cog = self.bot.get_cog('Quests')
+                    if quests_cog:
+                        await quests_cog.update_quest_progress(ctx.author.id, 'dispatch', 1)
+                except:
+                    pass
+                
                 # Award Hydro Essence if dispatch is in Fontaine (30% chance, 2-4 essence)
                 awarded_hydro_essence = 0
                 if region_name and region_name.strip().lower() == 'fontaine':
@@ -454,6 +494,12 @@ class Explore(commands.Cog):
                 
                 embed = discord.Embed(title=f"Dispatch Claimed! {char_name} returned from {region_name}", color=0x9b59b6)
                 rewards_parts = []
+                
+                # Show progression items first if awarded
+                if chest_items.get('rod_shard', 0) > 0:
+                    rewards_parts.append(f"🔧 {chest_items['rod_shard']} Rod Shard(s)")
+                if chest_items.get('fish_bait', 0) > 0:
+                    rewards_parts.append(f"🪱 {chest_items['fish_bait']} Fish Bait")
                 if mora_reward:
                     rewards_parts.append(f"<:mora:1437958309255577681> {mora_reward:,}")
                 if dust_reward:
@@ -499,17 +545,16 @@ class Explore(commands.Cog):
             # Only claim one finished dispatch at a time (the oldest finished)
             row = ready_sorted[0]
             # row: id, character_name, region, rarity, start, end, mora_reward, dust_reward, fates_reward, chest_award
-            did = row[0]
+            dispatch_id = row[0]
             char_name = row[1]
             region_name = row[2]
             rarity = row[3] if len(row) > 3 else None
             mora_reward = row[6] or 0
             dust_reward = row[7] or 0
-            fates_reward = row[8] or 0
             chest_award = row[9] or 0
 
             # re-check dispatch is still unclaimed and finished, then mark claimed
-            latest = await get_dispatch_by_id(did)
+            latest = await get_dispatch_by_id(dispatch_id)
             if not latest or latest[11]:
                 await ctx.send("That dispatch has already been claimed or cancelled.")
                 return
@@ -522,13 +567,13 @@ class Explore(commands.Cog):
                 return
 
             # re-check dispatch is still unclaimed and finished, then mark claimed
-            await mark_dispatch_claimed(did)
+            await mark_dispatch_claimed(dispatch_id)
 
             # apply rewards to user and handle chest-type awards
             data = await get_user_data(ctx.author.id)
             new_mora = data.get('mora', 0) + mora_reward
             new_dust = data.get('dust', 0) + dust_reward
-            chest_awards, extra_fates = _compute_chest_awards(region_name, rarity, chest_award)
+            chest_awards, extra_fates, chest_items = _compute_chest_awards(region_name, rarity, chest_award)
             # fates are only awarded from chests (extra_fates)
             total_fates = data.get('fates', 0) + extra_fates
             await update_user_data(ctx.author.id, mora=new_mora, dust=new_dust, fates=total_fates)
@@ -538,6 +583,15 @@ class Explore(commands.Cog):
                         await add_chest_with_type(ctx.author.id, ctype, amt)
                     except Exception:
                         print(f"Failed to award {amt}x {ctype} chest(s) to user {ctx.author.id}")
+            
+            # award progression items from chests
+            for item_key, amt in chest_items.items():
+                if amt and amt > 0:
+                    try:
+                        from utils.database import add_user_item
+                        await add_user_item(ctx.author.id, item_key, amt)
+                    except Exception:
+                        print(f"Failed to award {amt}x {item_key} to user {ctx.author.id}")
 
             # award account EXP for completing the dispatch (region-based)
             dispatch_exp = 0
@@ -583,6 +637,13 @@ class Explore(commands.Cog):
             # Build embed per requested format
             embed = discord.Embed(title=f"Dispatch Claimed! {char_name} returned from {region_name}", color=0x9b59b6)
             rewards_parts = []
+            
+            # Add progression items first
+            if chest_items.get('rod_shard', 0) > 0:
+                rewards_parts.append(f"🔧 {chest_items['rod_shard']} Rod Shard(s)")
+            if chest_items.get('fish_bait', 0) > 0:
+                rewards_parts.append(f"🪱 {chest_items['fish_bait']} Fish Bait")
+            
             if mora_reward:
                 rewards_parts.append(f"<:mora:1437958309255577681> {mora_reward:,}")
             if dust_reward:
@@ -649,38 +710,38 @@ class Explore(commands.Cog):
 
             lines = []
             for idx, (row, is_ready) in enumerate(combined_sorted, 1):
-                did = row[0]
                 char_name = row[1]
                 region_name = row[2]
                 start_iso = row[4]
                 end_iso = row[5]
                 # parse times
                 try:
+                    from utils.embed import create_progress_bar, format_time_remaining
+                    
                     start_dt = datetime.datetime.fromisoformat(start_iso)
                     end_dt = datetime.datetime.fromisoformat(end_iso)
                     total = end_dt - start_dt
-                    total_mins = int(total.total_seconds() // 60)
-                    total_secs = int(total.total_seconds() % 60)
-                    dur_str = f"{total_mins}m {total_secs}s"
                     remaining = end_dt - now
+                    
                     if remaining.total_seconds() < 0:
                         rem_str = "almost ready"
+                        progress_bar = create_progress_bar(1.0, 1.0, segments=15)
                     else:
-                        mins = int(remaining.total_seconds() // 60)
-                        secs = int(remaining.total_seconds() % 60)
-                        rem_str = f"{mins}m {secs}s"
+                        elapsed = (now - start_dt).total_seconds()
+                        total_time = total.total_seconds()
+                        progress_bar = create_progress_bar(elapsed, total_time, segments=15)
+                        rem_str = format_time_remaining(remaining.total_seconds())
                 except Exception:
-                    dur_str = "unknown"
                     rem_str = "unknown"
+                    progress_bar = "▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱"
 
                 if is_ready or (end_dt and end_dt <= now):
                     # ready to claim
-                    lines.append(f"**{idx}.** {char_name} in {region_name} - <a:Check:1437951818452832318> Ready to claim!")
+                    lines.append(f"**{idx}.** {char_name} in {region_name}\n`{progress_bar}`\n<a:Check:1437951818452832318> Ready to claim!")
                 else:
-                    lines.append(f"**{idx}.** {char_name} in {region_name} - ⏳ {rem_str}")
+                    lines.append(f"**{idx}.** {char_name} in {region_name}\n`{progress_bar}`\n⏳ {rem_str}")
 
             embed = discord.Embed(title="Dispatches", description="\n".join(lines), color=0x3498db)
-            embed.set_footer(text="Use !claim <number> to claim a dispatch (e.g., !claim 2)")
             await send_embed(ctx, embed)
         except Exception as e:
             from utils.logger import setup_logger

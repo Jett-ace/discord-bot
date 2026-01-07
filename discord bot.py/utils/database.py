@@ -5,14 +5,36 @@ from config import DB_PATH, RESET_TIME
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # Bot Settings (for persistent configuration)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS bot_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )""")
+        
         # Users
         await db.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             mora INTEGER DEFAULT 0,
             dust INTEGER DEFAULT 0,
-            fates INTEGER DEFAULT 0
+            fates INTEGER DEFAULT 0,
+            enrolled INTEGER DEFAULT 0,
+            bank_capacity INTEGER DEFAULT 1000000
         )""")
+        
+        # Add columns if they don't exist (migration)
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN enrolled INTEGER DEFAULT 0")
+            await db.commit()
+        except:
+            pass  # Column already exists
+        
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN bank_capacity INTEGER DEFAULT 1000000")
+            await db.commit()
+        except:
+            pass  # Column already exists
         # Pulls
         await db.execute("""
         CREATE TABLE IF NOT EXISTS pulls (
@@ -23,10 +45,44 @@ async def init_db():
             rarity TEXT,
             count INTEGER DEFAULT 1,
             relics INTEGER DEFAULT 0,
-            element TEXT,
+            class TEXT,
             hp INTEGER,
-            atk INTEGER
+            atk INTEGER,
+            card_level INTEGER DEFAULT 1,
+            card_exp INTEGER DEFAULT 0,
+            power_level INTEGER DEFAULT 0
         )""")
+        
+        # Migrate existing pulls to have card system columns and rename element to class
+        try:
+            async with db.execute("PRAGMA table_info('pulls')") as cursor:
+                cols = await cursor.fetchall()
+                col_names = [c[1] for c in cols]
+                
+                # Migrate from element to class column
+                if 'element' in col_names and 'class' not in col_names:
+                    await db.execute("ALTER TABLE pulls RENAME COLUMN element TO class")
+                    await db.commit()
+                
+                if 'card_level' not in col_names:
+                    await db.execute("ALTER TABLE pulls ADD COLUMN card_level INTEGER DEFAULT 1")
+                if 'card_exp' not in col_names:
+                    await db.execute("ALTER TABLE pulls ADD COLUMN card_exp INTEGER DEFAULT 0")
+                if 'power_level' not in col_names:
+                    await db.execute("ALTER TABLE pulls ADD COLUMN power_level INTEGER DEFAULT 0")
+                await db.commit()
+                
+                # Calculate power levels for existing cards
+                async with db.execute("SELECT id, rarity, card_level FROM pulls WHERE power_level = 0") as cursor:
+                    cards = await cursor.fetchall()
+                    for card_id, rarity, level in cards:
+                        # Base power by rarity: R=100, SR=300, SSR=800
+                        base_power = 100 if rarity == 'R' else (300 if rarity == 'SR' else 800)
+                        power = base_power + (level - 1) * (base_power // 10)
+                        await db.execute("UPDATE pulls SET power_level = ? WHERE id = ?", (power, card_id))
+                await db.commit()
+        except Exception:
+            pass
         # Persistent wish + pity
         await db.execute("""
         CREATE TABLE IF NOT EXISTS user_wishes (
@@ -100,8 +156,19 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS accounts (
             user_id INTEGER PRIMARY KEY,
             exp INTEGER DEFAULT 0,
-            level INTEGER DEFAULT 0
+            level INTEGER DEFAULT 0,
+            rod_level INTEGER DEFAULT 1
         )""")
+        # Migrate existing accounts to have rod_level if they don't
+        try:
+            async with db.execute("PRAGMA table_info('accounts')") as cursor:
+                cols = await cursor.fetchall()
+                col_names = [c[1] for c in cols]
+                if 'rod_level' not in col_names:
+                    await db.execute("ALTER TABLE accounts ADD COLUMN rod_level INTEGER DEFAULT 1")
+                    await db.commit()
+        except Exception:
+            pass
         # Track which level rewards a user has claimed (prevents double-granting)
         await db.execute("""
         CREATE TABLE IF NOT EXISTS level_claims (
@@ -127,6 +194,119 @@ async def init_db():
             description TEXT,
             awarded_at TIMESTAMP,
             PRIMARY KEY (user_id, ach_key)
+        )""")
+        # Inventory table for black market items
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS inventory (
+            user_id INTEGER,
+            item_id TEXT,
+            quantity INTEGER DEFAULT 0,
+            activated_at TIMESTAMP,
+            PRIMARY KEY (user_id, item_id)
+        )""")
+        # Active items with usage tracking
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS active_items (
+            user_id INTEGER,
+            item_id TEXT,
+            activated_at TIMESTAMP,
+            uses_remaining INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, item_id)
+        )""")
+        # Black market global stock (shared by everyone)
+        # Migration: Drop and recreate black_market_stock table with user_id
+        try:
+            # Check if user_id column exists
+            async with db.execute("PRAGMA table_info(black_market_stock)") as cursor:
+                columns = await cursor.fetchall()
+                has_user_id = any(col[1] == 'user_id' for col in columns)
+                
+            if not has_user_id:
+                # Drop old table and recreate with new schema
+                await db.execute("DROP TABLE IF EXISTS black_market_stock")
+                await db.execute("""
+                CREATE TABLE black_market_stock (
+                    user_id INTEGER,
+                    item_id TEXT,
+                    stock INTEGER DEFAULT 0,
+                    price INTEGER DEFAULT 0,
+                    last_restock TIMESTAMP,
+                    PRIMARY KEY (user_id, item_id)
+                )""")
+                await db.commit()
+        except Exception as e:
+            print(f"Migration error for black_market_stock: {e}")
+        
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS black_market_stock (
+            user_id INTEGER,
+            item_id TEXT,
+            stock INTEGER DEFAULT 0,
+            price INTEGER DEFAULT 0,
+            last_restock TIMESTAMP,
+            PRIMARY KEY (user_id, item_id)
+        )""")
+        
+        # Player listings on black market
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS black_market_listings (
+            listing_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seller_id INTEGER,
+            item_id TEXT,
+            price INTEGER,
+            quantity INTEGER DEFAULT 1,
+            listed_at TIMESTAMP
+        )""")
+        # Chest inventory (regular and diamond chests)
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS chest_inventory (
+            user_id INTEGER,
+            chest_type TEXT,
+            quantity INTEGER DEFAULT 0,
+            PRIMARY KEY (user_id, chest_type)
+        )""")
+        # Game statistics table for achievement tracking
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS game_stats (
+            user_id INTEGER PRIMARY KEY,
+            rps_wins INTEGER DEFAULT 0,
+            rps_plays INTEGER DEFAULT 0,
+            connect4_wins INTEGER DEFAULT 0,
+            connect4_plays INTEGER DEFAULT 0,
+            tictactoe_wins INTEGER DEFAULT 0,
+            tictactoe_plays INTEGER DEFAULT 0,
+            blackjack_wins INTEGER DEFAULT 0,
+            blackjack_plays INTEGER DEFAULT 0,
+            blackjack_naturals INTEGER DEFAULT 0,
+            slots_plays INTEGER DEFAULT 0,
+            slots_jackpots INTEGER DEFAULT 0,
+            coinflip_wins INTEGER DEFAULT 0,
+            coinflip_plays INTEGER DEFAULT 0,
+            coinflip_streak INTEGER DEFAULT 0,
+            mines_wins INTEGER DEFAULT 0,
+            mines_plays INTEGER DEFAULT 0,
+            mines_max_tiles INTEGER DEFAULT 0,
+            scramble_games INTEGER DEFAULT 0,
+            scramble_wins INTEGER DEFAULT 0,
+            scramble_losses INTEGER DEFAULT 0,
+            scramble_streak INTEGER DEFAULT 0,
+            scramble_best_time REAL DEFAULT 0,
+            hilo_games INTEGER DEFAULT 0,
+            hilo_cashouts INTEGER DEFAULT 0,
+            hilo_busts INTEGER DEFAULT 0,
+            hilo_best_streak INTEGER DEFAULT 0,
+            hilo_jokers INTEGER DEFAULT 0,
+            tower_games INTEGER DEFAULT 0,
+            tower_cashouts INTEGER DEFAULT 0,
+            tower_traps INTEGER DEFAULT 0,
+            tower_highest_floor INTEGER DEFAULT 0,
+            tower_perfect INTEGER DEFAULT 0,
+            multiplayer_games INTEGER DEFAULT 0,
+            total_earned INTEGER DEFAULT 0,
+            max_wallet INTEGER DEFAULT 0,
+            rob_success INTEGER DEFAULT 0,
+            rob_attempts INTEGER DEFAULT 0,
+            games_played_types TEXT DEFAULT ''
         )""")
         # Per-user consumable / misc item storage (e.g., exp bottles)
         await db.execute("""
@@ -155,7 +335,70 @@ async def init_db():
             exp INTEGER DEFAULT 0,
             caught_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )""")
+        
+        # Migration: Add mines_wins column if it doesn't exist
+        try:
+            await db.execute("ALTER TABLE game_stats ADD COLUMN mines_wins INTEGER DEFAULT 0")
+            await db.commit()
+        except:
+            pass  # Column already exists
+        
+        # Migration: Add scramble columns if they don't exist
+        try:
+            await db.execute("ALTER TABLE game_stats ADD COLUMN scramble_games INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN scramble_wins INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN scramble_losses INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN scramble_streak INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN scramble_best_time REAL DEFAULT 0")
+            await db.commit()
+        except:
+            pass  # Columns already exist
+        
+        # Migration: Add hilo columns if they don't exist
+        try:
+            await db.execute("ALTER TABLE game_stats ADD COLUMN hilo_games INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN hilo_cashouts INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN hilo_busts INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN hilo_best_streak INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN hilo_jokers INTEGER DEFAULT 0")
+            await db.commit()
+        except:
+            pass  # Columns already exist
+        
+        # Migration: Add tower columns if they don't exist
+        try:
+            await db.execute("ALTER TABLE game_stats ADD COLUMN tower_games INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN tower_cashouts INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN tower_traps INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN tower_highest_floor INTEGER DEFAULT 0")
+            await db.execute("ALTER TABLE game_stats ADD COLUMN tower_perfect INTEGER DEFAULT 0")
+            await db.commit()
+        except:
+            pass  # Columns already exist
+        
         await db.commit()
+
+async def is_enrolled(user_id):
+    """Check if user is enrolled in the bot"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await init_db()
+        async with db.execute("SELECT enrolled FROM users WHERE user_id=?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row and row[0] == 1
+
+async def require_enrollment(ctx):
+    """Check if user is enrolled, auto-enroll if not. Always returns True."""
+    if not await is_enrolled(ctx.author.id):
+        # Auto-enroll the user
+        async with aiosqlite.connect(DB_PATH) as db:
+            await init_db()
+            # Create user with starting balance
+            await db.execute(
+                "INSERT OR REPLACE INTO users (user_id, mora, dust, fates, enrolled) VALUES (?, ?, ?, ?, ?)",
+                (ctx.author.id, 10000, 0, 0, 1)
+            )
+            await db.commit()
+    return True
 
 async def ensure_user_db(user_id):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -163,8 +406,8 @@ async def ensure_user_db(user_id):
         async with db.execute("SELECT * FROM users WHERE user_id=?", (user_id,)) as cursor:
             user = await cursor.fetchone()
             if not user:
-                await db.execute("INSERT INTO users (user_id) VALUES (?)", (user_id,))
-                await db.commit()
+                # Don't auto-create, user must enroll first
+                return False
         async with db.execute("SELECT * FROM user_wishes WHERE user_id=?", (user_id,)) as cursor:
             wish = await cursor.fetchone()
             if not wish:
@@ -186,7 +429,7 @@ async def ensure_user_db(user_id):
         async with db.execute("SELECT * FROM accounts WHERE user_id=?", (user_id,)) as cursor:
             acc = await cursor.fetchone()
             if not acc:
-                await db.execute("INSERT INTO accounts (user_id, exp, level) VALUES (?, ?, ?)", (user_id, 0, 0))
+                await db.execute("INSERT INTO accounts (user_id, exp, level, rod_level) VALUES (?, ?, ?, ?)", (user_id, 0, 0, 1))
                 await db.commit()
 
 async def get_user_data(user_id):
@@ -194,7 +437,31 @@ async def get_user_data(user_id):
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT mora, dust, fates FROM users WHERE user_id=?", (user_id,)) as cursor:
             row = await cursor.fetchone()
-            return {"mora": row[0], "dust": row[1], "fates": row[2]}
+        
+        if not row:
+            # User doesn't exist, return defaults
+            return {
+                "mora": 0,
+                "dust": 0,
+                "fates": 0,
+                "intertwined_fates": 0,
+                "acquaint_fates": 0,
+                "total_pulls": 0
+            }
+        
+        # Get total pulls from user_wishes
+        async with db.execute("SELECT count FROM user_wishes WHERE user_id=?", (user_id,)) as cursor:
+            wish_row = await cursor.fetchone()
+            total_pulls = wish_row[0] if wish_row else 0
+        
+        return {
+            "mora": row[0],
+            "dust": row[1],
+            "fates": row[2],
+            "intertwined_fates": row[1],  # dust is intertwined fates
+            "acquaint_fates": row[2],      # fates is acquaint fates
+            "total_pulls": total_pulls
+        }
 
 async def update_user_data(user_id, mora=None, dust=None, fates=None):
     await ensure_user_db(user_id)
@@ -244,12 +511,16 @@ async def save_pull(user_id: int, username: str, char: dict):
                 name_with_rarity = f"{char_name} ({rarity})" if rarity else char_name
                 return f"{name_with_rarity} - Obtained 1x {char_name.lower()} relic."
             else:
-                # New card: insert into pulls with count=1 and relics=0
+                # New card: insert into pulls with count=1, relics=0, card_level=1, card_exp=0
+                # Calculate initial power level based on rarity
+                rarity = char.get("rarity") or "R"
+                base_power = 100 if rarity == 'R' else (300 if rarity == 'SR' else 800)
+                
                 await db.execute("""
-                    INSERT INTO pulls (user_id, username, character_name, rarity, count, relics, element, hp, atk)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (user_id, username, char_name, char.get("rarity"), 1, 0,
-                      char.get("element"), char.get("hp"), char.get("atk")))
+                    INSERT INTO pulls (user_id, username, character_name, rarity, count, relics, class, hp, atk, card_level, card_exp, power_level)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (user_id, username, char_name, rarity, 1, 0,
+                      char.get("class"), char.get("hp"), char.get("atk"), 1, 0, base_power))
                 await db.commit()
                 return f"{char_name} ({char.get('rarity')}) - Obtained new card."
     except Exception as e:
@@ -260,7 +531,7 @@ async def get_user_pulls(user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await init_db()
         async with db.execute(
-            "SELECT character_name, rarity, count, relics, element, hp, atk FROM pulls WHERE user_id=?",
+            "SELECT character_name, rarity, count, relics, class, hp, atk FROM pulls WHERE user_id=?",
             (user_id,)
         ) as cursor:
             return await cursor.fetchall()
@@ -608,7 +879,7 @@ async def _exp_required_for_level(level: int) -> int:
 
 
 async def get_account_level(user_id: int):
-    """Return a tuple (level, exp) for the user's account."""
+    """Return a tuple (level, exp, needed) for the user's account."""
     await ensure_user_db(user_id)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT level, exp FROM accounts WHERE user_id=?", (user_id,)) as cur:
@@ -619,6 +890,47 @@ async def get_account_level(user_id: int):
             exp = int(row[1] or 0)
             needed = await _exp_required_for_level(level)
             return level, exp, needed
+
+
+async def add_account_exp(user_id: int, exp_amount: int):
+    """Add EXP to user's account and handle level ups.
+    
+    Args:
+        user_id: Discord user ID
+        exp_amount: Amount of EXP to add
+    
+    Returns:
+        Tuple of (leveled_up: bool, new_level: int, old_level: int)
+    """
+    await ensure_user_db(user_id)
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Get current level and exp
+        level, exp, needed = await get_account_level(user_id)
+        old_level = level
+        
+        # Add exp
+        exp += exp_amount
+        
+        # Check for level ups
+        leveled_up = False
+        while exp >= needed:
+            exp -= needed
+            level += 1
+            leveled_up = True
+            needed = await _exp_required_for_level(level)
+            
+            # Grant level rewards
+            await grant_level_rewards(user_id, level)
+        
+        # Update database
+        await db.execute(
+            "UPDATE accounts SET level = ?, exp = ? WHERE user_id = ?",
+            (level, exp, user_id)
+        )
+        await db.commit()
+        
+        return leveled_up, level, old_level
 
 
 async def grant_level_rewards(user_id: int, level: int):
@@ -640,11 +952,7 @@ async def grant_level_rewards(user_id: int, level: int):
         await db.execute("INSERT OR REPLACE INTO level_claims (user_id, level, claimed) VALUES (?, ?, 1)", (user_id, level))
 
 
-        # Basic reward: 1 common chest
-        try:
-            await add_chest_with_type(user_id, 'common', 1)
-        except Exception:
-            pass
+        # Removed chest rewards - only Mora now
 
         # Per-level Mora scaled by stage: stage = (level//20) + 1
         try:
@@ -657,7 +965,7 @@ async def grant_level_rewards(user_id: int, level: int):
         except Exception:
             pass
 
-        # Every 10 levels: extra Mora and exquisite chest (scaled by stage)
+        # Every 10 levels: extra Mora (scaled by stage)
         if level % 10 == 0:
             try:
                 extra_mora = 5000 * stage
@@ -665,10 +973,6 @@ async def grant_level_rewards(user_id: int, level: int):
                     r2 = await cur3.fetchone()
                     cur_now = int(r2[0] or 0) if r2 else 0
                 await db.execute("UPDATE users SET mora=? WHERE user_id=?", (cur_now + extra_mora, user_id))
-            except Exception:
-                pass
-            try:
-                await add_chest_with_type(user_id, 'exquisite', 1)
             except Exception:
                 pass
         
@@ -703,8 +1007,164 @@ async def grant_level_rewards(user_id: int, level: int):
         return True
 
 
-async def add_account_exp(user_id: int, amount: int, source: str = 'unknown'):
-    """Add EXP to a user's account and handle level ups.
+async def get_card_exp_required(level: int) -> int:
+    """Calculate EXP needed to level up a card from current level.
+    Always 1000 EXP per level.
+    """
+    return 1000
+
+
+async def calculate_card_power_level(rarity: str, level: int) -> int:
+    """Calculate power level based on rarity and level.
+    Base power: R=100, SR=300, SSR=800
+    Each level adds 10% of base power
+    """
+    base_power = 100 if rarity == 'R' else (300 if rarity == 'SR' else 800)
+    return base_power + ((level - 1) * (base_power // 10))
+
+
+async def calculate_card_stats(base_hp: int, base_atk: int, level: int, rarity: str):
+    """Calculate card stats at a given level.
+    Stats increase by 5% per level for R, 7% for SR, 10% for SSR
+    """
+    # Growth rate by rarity
+    if rarity == 'SSR':
+        growth = 0.10  # 10% per level
+    elif rarity == 'SR':
+        growth = 0.07  # 7% per level
+    else:
+        growth = 0.05  # 5% per level
+    
+    # Calculate multiplier
+    multiplier = 1 + (growth * (level - 1))
+    
+    current_hp = int(base_hp * multiplier)
+    current_atk = int(base_atk * multiplier)
+    
+    return current_hp, current_atk
+
+
+async def get_card_info(user_id: int, character_name: str):
+    """Get detailed info about a user's card."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await init_db()
+        async with db.execute(
+            "SELECT id, character_name, rarity, class, hp, atk, card_level, card_exp, power_level FROM pulls WHERE user_id = ? AND LOWER(character_name) = LOWER(?)",
+            (user_id, character_name)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            
+            card_id, name, rarity, servant_class, base_hp, base_atk, level, exp, power = row
+            current_hp, current_atk = await calculate_card_stats(base_hp, base_atk, level, rarity)
+            exp_needed = await get_card_exp_required(level)
+            
+            return {
+                'id': card_id,
+                'name': name,
+                'rarity': rarity,
+                'class': servant_class,
+                'base_hp': base_hp,
+                'base_atk': base_atk,
+                'current_hp': current_hp,
+                'current_atk': current_atk,
+                'level': level,
+                'exp': exp,
+                'exp_needed': exp_needed,
+                'power_level': power
+            }
+
+
+async def level_up_card(user_id: int, character_name: str, exp_bottles: int):
+    """Use EXP bottles to level up a card. Each bottle = 200 EXP.
+    Returns dict with level_ups, new_level, new_stats, etc.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        await init_db()
+        
+        # Get card
+        async with db.execute(
+            "SELECT id, character_name, rarity, hp, atk, card_level, card_exp, power_level FROM pulls WHERE user_id = ? AND LOWER(character_name) = LOWER(?)",
+            (user_id, character_name)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return {'success': False, 'error': 'Card not found'}
+        
+        card_id, name, rarity, base_hp, base_atk, level, current_exp, power = row
+        
+        # Check user has enough bottles
+        async with db.execute(
+            "SELECT count FROM user_items WHERE user_id = ? AND item_key = 'exp_bottle'",
+            (user_id,)
+        ) as cursor:
+            bottle_row = await cursor.fetchone()
+            available_bottles = bottle_row[0] if bottle_row else 0
+        
+        if available_bottles < exp_bottles:
+            return {'success': False, 'error': f'Not enough EXP bottles (have {available_bottles}, need {exp_bottles})'}
+        
+        # Calculate EXP gain based on rarity (R=750, SR=500, SSR=250 per bottle)
+        exp_per_bottle = 750 if rarity == 'R' else (500 if rarity == 'SR' else 250)
+        exp_gain = exp_bottles * exp_per_bottle
+        new_exp = current_exp + exp_gain
+        new_level = level
+        level_ups = 0
+        
+        # Process level ups
+        while True:
+            exp_needed = await get_card_exp_required(new_level)
+            if new_exp >= exp_needed:
+                new_exp -= exp_needed
+                new_level += 1
+                level_ups += 1
+            else:
+                break
+        
+        # Calculate new stats and power
+        new_hp, new_atk = await calculate_card_stats(base_hp, base_atk, new_level, rarity)
+        new_power = await calculate_card_power_level(rarity, new_level)
+        
+        # Update database
+        await db.execute(
+            "UPDATE pulls SET card_level = ?, card_exp = ?, power_level = ? WHERE id = ?",
+            (new_level, new_exp, new_power, card_id)
+        )
+        
+        # Deduct bottles
+        await db.execute(
+            "UPDATE user_items SET count = count - ? WHERE user_id = ? AND item_key = 'exp_bottle'",
+            (exp_bottles, user_id)
+        )
+        
+        await db.commit()
+        
+        # Calculate old stats for comparison
+        old_hp, old_atk = await calculate_card_stats(base_hp, base_atk, level, rarity)
+        
+        return {
+            'success': True,
+            'name': name,
+            'rarity': rarity,
+            'old_level': level,
+            'new_level': new_level,
+            'level_ups': level_ups,
+            'old_hp': old_hp,
+            'new_hp': new_hp,
+            'old_atk': old_atk,
+            'new_atk': new_atk,
+            'old_power': power,
+            'new_power': new_power,
+            'exp_used': exp_gain,
+            'new_exp': new_exp,
+            'exp_needed': await get_card_exp_required(new_level),
+            'bottles_used': exp_bottles
+        }
+
+
+async def add_account_exp_detailed(user_id: int, amount: int, source: str = 'unknown'):
+    """Add EXP to a user's account and handle level ups. Returns detailed information.
 
     Returns: dict with keys: 'old_level','new_level','old_exp','new_exp','levels_gained'
     """
@@ -826,6 +1286,81 @@ async def check_and_award_level_achievements(user_id: int):
     return awarded_count
 
 
+# ===== Fishing Rod System =====
+
+async def get_rod_level(user_id: int) -> int:
+    """Return the user's current fishing rod level."""
+    await ensure_user_db(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT rod_level FROM accounts WHERE user_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            return int(row[0] or 1) if row else 1
+
+
+async def upgrade_rod(user_id: int) -> dict:
+    """Upgrade user's fishing rod by 1 level. Returns dict with old_level, new_level, and cost.
+    
+    Cost formula: 5 rod shards * current_level
+    Example: Level 1->2 costs 5 shards, Level 2->3 costs 10 shards, Level 5->6 costs 25 shards
+    """
+    await ensure_user_db(user_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Get current rod level
+        async with db.execute("SELECT rod_level FROM accounts WHERE user_id=?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            current_level = int(row[0] or 1) if row else 1
+        
+        # Calculate cost (5 shards per current level)
+        cost = 5 * current_level
+        
+        # Check if user has enough rod shards
+        shard_count = await get_user_item_count(user_id, 'rod_shard')
+        if shard_count < cost:
+            return {"success": False, "error": "insufficient_shards", "required": cost, "current": shard_count}
+        
+        # Deduct shards
+        await db.execute("""
+            UPDATE user_items SET count = count - ? 
+            WHERE user_id = ? AND item_key = 'rod_shard'
+        """, (cost, user_id))
+        
+        # Upgrade rod
+        new_level = current_level + 1
+        await db.execute("UPDATE accounts SET rod_level = ? WHERE user_id = ?", (new_level, user_id))
+        await db.commit()
+        
+        return {
+            "success": True,
+            "old_level": current_level,
+            "new_level": new_level,
+            "cost": cost
+        }
+
+
+def get_rod_catch_bonus(rod_level: int) -> dict:
+    """Calculate fishing bonuses based on rod level.
+    
+    Returns dict with:
+    - catch_rate_bonus: % bonus to base catch rate (0.0 to 1.0)
+    - rare_chance_bonus: flat % bonus to rare fish (0.0 to 1.0)
+    - mythic_chance_bonus: flat % bonus to mythic fish (0.0 to 1.0)
+    
+    Bonuses scale with rod level:
+    - Catch rate: +2% per level (capped at 20% at level 10)
+    - Rare chance: +0.5% per level (capped at 5% at level 10)
+    - Mythic chance: +0.2% per level (capped at 2% at level 10)
+    """
+    catch_bonus = min(0.02 * rod_level, 0.20)  # Max 20%
+    rare_bonus = min(0.005 * rod_level, 0.05)  # Max +5%
+    mythic_bonus = min(0.002 * rod_level, 0.02)  # Max +2%
+    
+    return {
+        "catch_rate_bonus": catch_bonus,
+        "rare_chance_bonus": rare_bonus,
+        "mythic_chance_bonus": mythic_bonus
+    }
+
+
 async def add_fish_caught(user_id: int, fish_name: str, count: int = 1):
     """Track a fish caught by a user. Increments count and sets first_caught timestamp if new."""
     await ensure_user_db(user_id)
@@ -909,3 +1444,372 @@ async def level_up_fish_pet(user_id: int, pet_id: int, crystals_needed: int):
         await db.execute("UPDATE fish_pets SET level = level + 1 WHERE id=?", (pet_id,))
         await db.commit()
         return True
+
+
+async def has_unlimited_game(user_id: int, game: str) -> bool:
+    """Check if user has unlimited betting for a specific game
+    
+    Args:
+        user_id: Discord user ID
+        game: Game name ('blackjack', 'flip', 'mines', 'slots')
+    
+    Returns:
+        True if unlimited, False if limited to 200k
+    """
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "SELECT unlimited_games FROM game_limits WHERE user_id = ?",
+                (user_id,)
+            )
+            row = await cursor.fetchone()
+            flags = row[0] if row else 0
+        
+        # Game flags
+        game_flags = {
+            "blackjack": 1 << 0,
+            "flip": 1 << 1,
+            "mines": 1 << 2,
+            "slots": 1 << 3
+        }
+        
+        flag = game_flags.get(game.lower(), 0)
+        return bool(flags & flag)
+    except:
+        return False
+
+
+# ===== Game Stats Tracking for Achievements =====
+
+async def track_game_stat(user_id: int, stat_name: str, increment: int = 1):
+    """Track a game statistic for achievement purposes.
+    
+    Args:
+        user_id: Discord user ID
+        stat_name: Name of the stat (e.g., 'rps_wins', 'blackjack_plays')
+        increment: Amount to increment by (default 1)
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Ensure row exists
+        await db.execute(
+            "INSERT OR IGNORE INTO game_stats (user_id) VALUES (?)",
+            (user_id,)
+        )
+        # Update stat
+        await db.execute(
+            f"UPDATE game_stats SET {stat_name} = {stat_name} + ? WHERE user_id = ?",
+            (increment, user_id)
+        )
+        await db.commit()
+
+
+async def get_game_stat(user_id: int, stat_name: str) -> int:
+    """Get a specific game statistic.
+    
+    Args:
+        user_id: Discord user ID
+        stat_name: Name of the stat
+    
+    Returns:
+        The value of the stat, or 0 if not found
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            f"SELECT {stat_name} FROM game_stats WHERE user_id = ?",
+            (user_id,)
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+
+async def check_and_award_game_achievements(user_id: int, bot=None, ctx=None):
+    """Check game stats and award any earned achievements.
+    
+    Args:
+        user_id: Discord user ID
+        bot: Bot instance (optional, for sending DMs)
+        ctx: Context (optional, for sending messages)
+    """
+    from utils.achievements import ACHIEVEMENTS
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        # Get current stats
+        cursor = await db.execute("SELECT * FROM game_stats WHERE user_id = ?", (user_id,))
+        stats = await cursor.fetchone()
+        if not stats:
+            return []
+        
+        # Map column indices (user_id, rps_wins, rps_plays, ...)
+        stat_dict = {
+            'rps_wins': stats[1],
+            'rps_plays': stats[2],
+            'connect4_wins': stats[3],
+            'connect4_plays': stats[4],
+            'tictactoe_wins': stats[5],
+            'tictactoe_plays': stats[6],
+            'blackjack_wins': stats[7],
+            'blackjack_plays': stats[8],
+            'blackjack_naturals': stats[9],
+            'slots_plays': stats[10],
+            'slots_jackpots': stats[11],
+            'coinflip_wins': stats[12],
+            'coinflip_plays': stats[13],
+            'coinflip_streak': stats[14],
+            'mines_plays': stats[15],
+            'mines_max_tiles': stats[16],
+            'multiplayer_games': stats[17],
+            'total_earned': stats[18],
+            'max_wallet': stats[19],
+            'rob_success': stats[20],
+            'rob_attempts': stats[21],
+            'games_played_types': stats[22] if len(stats) > 22 else ''
+        }
+        
+        # Get already unlocked achievements
+        cursor = await db.execute(
+            "SELECT ach_key FROM achievements WHERE user_id = ?",
+            (user_id,)
+        )
+        unlocked = {row[0] for row in await cursor.fetchall()}
+        
+        # Check achievements
+        newly_awarded = []
+        
+        # RPS achievements
+        if stat_dict['rps_wins'] >= 10 and 'rps_win_10' not in unlocked:
+            await award_achievement(user_id, 'rps_win_10', 'RPS Novice', 'Win 10 games of Rock Paper Scissors!')
+            await db.execute("UPDATE users SET mora = mora + 50000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('rps_win_10')
+        if stat_dict['rps_wins'] >= 50 and 'rps_win_50' not in unlocked:
+            await award_achievement(user_id, 'rps_win_50', 'RPS Expert', 'Win 50 games of Rock Paper Scissors!')
+            await db.execute("UPDATE users SET mora = mora + 100000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('rps_win_50')
+        if stat_dict['rps_wins'] >= 100 and 'rps_win_100' not in unlocked:
+            await award_achievement(user_id, 'rps_win_100', 'RPS Master', 'Win 100 games of Rock Paper Scissors!')
+            await db.execute("UPDATE users SET mora = mora + 250000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('rps_win_100')
+        
+        # Multiplayer achievements
+        if stat_dict['multiplayer_games'] >= 50 and 'play_multiplayer_50' not in unlocked:
+            await award_achievement(user_id, 'play_multiplayer_50', 'Social Butterfly', 'Play 50 games against other players!')
+            await db.execute("UPDATE users SET mora = mora + 50000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('play_multiplayer_50')
+        if stat_dict['multiplayer_games'] >= 100 and 'play_multiplayer_100' not in unlocked:
+            await award_achievement(user_id, 'play_multiplayer_100', 'Community Favorite', 'Play 100 games against other players!')
+            await db.execute("UPDATE users SET mora = mora + 100000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('play_multiplayer_100')
+        if stat_dict['multiplayer_games'] >= 250 and 'play_multiplayer_250' not in unlocked:
+            await award_achievement(user_id, 'play_multiplayer_250', 'Tournament Regular', 'Play 250 games against other players!')
+            await db.execute("UPDATE users SET mora = mora + 200000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('play_multiplayer_250')
+        
+        # Connect4 achievements
+        if stat_dict['connect4_wins'] >= 10 and 'connect4_win_10' not in unlocked:
+            await award_achievement(user_id, 'connect4_win_10', 'Connect4 Starter', 'Win 10 games of Connect4!')
+            await db.execute("UPDATE users SET mora = mora + 50000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('connect4_win_10')
+        if stat_dict['connect4_wins'] >= 25 and 'connect4_win_25' not in unlocked:
+            await award_achievement(user_id, 'connect4_win_25', 'Connect4 Pro', 'Win 25 games of Connect4!')
+            await db.execute("UPDATE users SET mora = mora + 75000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('connect4_win_25')
+        
+        # TicTacToe achievements
+        if stat_dict['tictactoe_wins'] >= 10 and 'tictactoe_win_10' not in unlocked:
+            await award_achievement(user_id, 'tictactoe_win_10', 'Tic-Tac-Toe Rookie', 'Win 10 games of Tic-Tac-Toe!')
+            await db.execute("UPDATE users SET mora = mora + 50000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('tictactoe_win_10')
+        if stat_dict['tictactoe_wins'] >= 25 and 'tictactoe_win_25' not in unlocked:
+            await award_achievement(user_id, 'tictactoe_win_25', 'Tic-Tac-Toe Champion', 'Win 25 games of Tic-Tac-Toe!')
+            await db.execute("UPDATE users SET mora = mora + 75000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('tictactoe_win_25')
+        
+        # Blackjack achievements
+        if stat_dict['blackjack_wins'] >= 10 and 'blackjack_win_10' not in unlocked:
+            await award_achievement(user_id, 'blackjack_win_10', 'Blackjack Beginner', 'Win 10 games of Blackjack!')
+            await db.execute("UPDATE users SET mora = mora + 50000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('blackjack_win_10')
+        if stat_dict['blackjack_wins'] >= 50 and 'blackjack_win_50' not in unlocked:
+            await award_achievement(user_id, 'blackjack_win_50', 'Card Shark', 'Win 50 games of Blackjack!')
+            await db.execute("UPDATE users SET mora = mora + 100000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('blackjack_win_50')
+        if stat_dict['blackjack_naturals'] >= 10 and 'blackjack_natural_10' not in unlocked:
+            await award_achievement(user_id, 'blackjack_natural_10', 'Natural 21', 'Get 10 natural blackjacks!')
+            await db.execute("UPDATE users SET mora = mora + 75000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('blackjack_natural_10')
+        
+        # Slots achievements
+        if stat_dict['slots_jackpots'] >= 1 and 'slots_jackpot_1' not in unlocked:
+            await award_achievement(user_id, 'slots_jackpot_1', 'First Jackpot', 'Hit your first jackpot on slots!')
+            await db.execute("UPDATE users SET mora = mora + 100000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('slots_jackpot_1')
+        if stat_dict['slots_plays'] >= 100 and 'slots_play_100' not in unlocked:
+            await award_achievement(user_id, 'slots_play_100', 'Slot Enthusiast', 'Play 100 games of slots!')
+            await db.execute("UPDATE users SET mora = mora + 50000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('slots_play_100')
+        
+        # Coinflip achievements
+        if stat_dict['coinflip_wins'] >= 10 and 'coinflip_win_10' not in unlocked:
+            await award_achievement(user_id, 'coinflip_win_10', 'Lucky Flipper', 'Win 10 coinflips!')
+            await db.execute("UPDATE users SET mora = mora + 25000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('coinflip_win_10')
+        if stat_dict['coinflip_streak'] >= 5 and 'coinflip_streak_5' not in unlocked:
+            await award_achievement(user_id, 'coinflip_streak_5', 'Flip Streak', 'Win 5 coinflips in a row!')
+            await db.execute("UPDATE users SET mora = mora + 100000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('coinflip_streak_5')
+        
+        # Mines achievements
+        if stat_dict['mines_max_tiles'] >= 15 and 'mines_reveal_15' not in unlocked:
+            await award_achievement(user_id, 'mines_reveal_15', 'Risk Taker', 'Reveal 15 safe tiles in one Mines game!')
+            await db.execute("UPDATE users SET mora = mora + 150000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('mines_reveal_15')
+        
+        # Economy achievements
+        if stat_dict['total_earned'] >= 1000000 and 'earn_1m' not in unlocked:
+            await award_achievement(user_id, 'earn_1m', 'Millionaire', 'Earn 1,000,000 Mora total!')
+            await db.execute("UPDATE users SET mora = mora + 100000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('earn_1m')
+        if stat_dict['total_earned'] >= 10000000 and 'earn_10m' not in unlocked:
+            await award_achievement(user_id, 'earn_10m', 'Multi-Millionaire', 'Earn 10,000,000 Mora total!')
+            await db.execute("UPDATE users SET mora = mora + 500000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('earn_10m')
+        if stat_dict['max_wallet'] >= 500000 and 'wallet_500k' not in unlocked:
+            await award_achievement(user_id, 'wallet_500k', 'Big Spender', 'Have 500,000 Mora in your wallet at once!')
+            await db.execute("UPDATE users SET mora = mora + 50000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('wallet_500k')
+        
+        # Rob achievements
+        if stat_dict['rob_success'] >= 10 and 'rob_success_10' not in unlocked:
+            await award_achievement(user_id, 'rob_success_10', 'Thief', 'Successfully rob 10 times!')
+            await db.execute("UPDATE users SET mora = mora + 50000 WHERE user_id = ?", (user_id,))
+            newly_awarded.append('rob_success_10')
+        
+        await db.commit()
+    
+    return newly_awarded
+
+
+# ========== BLACK MARKET / INVENTORY HELPERS ==========
+
+async def has_active_item(user_id, item_id):
+    """Check if user has an active item"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT uses_remaining FROM active_items WHERE user_id = ? AND item_id = ?",
+            (user_id, item_id)
+        ) as cursor:
+            result = await cursor.fetchone()
+            return result[0] if result else 0
+
+
+async def consume_active_item(user_id, item_id):
+    """Consume one use of an active item"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT uses_remaining FROM active_items WHERE user_id = ? AND item_id = ?",
+            (user_id, item_id)
+        ) as cursor:
+            result = await cursor.fetchone()
+            
+        if not result or result[0] <= 0:
+            return False
+        
+        new_uses = result[0] - 1
+        if new_uses <= 0:
+            await db.execute(
+                "DELETE FROM active_items WHERE user_id = ? AND item_id = ?",
+                (user_id, item_id)
+            )
+        else:
+            await db.execute(
+                "UPDATE active_items SET uses_remaining = ? WHERE user_id = ? AND item_id = ?",
+                (new_uses, user_id, item_id)
+            )
+        await db.commit()
+        return True
+
+
+async def has_inventory_item(user_id, item_id):
+    """Check if user has an item in inventory (for single-use items like golden_chip, rigged_deck)"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = ?",
+            (user_id, item_id)
+        ) as cursor:
+            result = await cursor.fetchone()
+            return result[0] if result else 0
+
+
+async def consume_inventory_item(user_id, item_id):
+    """Consume one item from inventory"""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = ?",
+            (user_id, item_id)
+        ) as cursor:
+            result = await cursor.fetchone()
+            
+        if not result or result[0] <= 0:
+            return False
+        
+        await db.execute(
+            "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+            (user_id, item_id)
+        )
+        await db.execute(
+            "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+            (user_id,)
+        )
+        await db.commit()
+        return True
+
+
+async def has_xp_booster(user_id):
+    """Check if user has active XP booster"""
+    from datetime import datetime, timedelta
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT activated_at FROM inventory WHERE user_id = ? AND item_id = 'xp_booster' AND activated_at IS NOT NULL",
+            (user_id,)
+        ) as cursor:
+            result = await cursor.fetchone()
+            
+        if not result:
+            return False
+        
+        activated_time = datetime.fromisoformat(result[0])
+        expiry = activated_time + timedelta(minutes=30)
+
+
+async def has_lucky_horseshoe(user_id):
+    """Check if user has active lucky horseshoe"""
+    from datetime import datetime, timedelta
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT activated_at FROM inventory WHERE user_id = ? AND item_id = 'lucky_horseshoe' AND activated_at IS NOT NULL",
+            (user_id,)
+        ) as cursor:
+            result = await cursor.fetchone()
+            
+        if not result:
+            return False
+        
+        activated_time = datetime.fromisoformat(result[0])
+        expiry = activated_time + timedelta(hours=24)
+        
+        # Check if still active
+        if datetime.now() > expiry:
+            # Expired - remove from inventory
+            await db.execute(
+                "UPDATE inventory SET activated_at = NULL, quantity = quantity - 1 WHERE user_id = ? AND item_id = 'lucky_horseshoe'",
+                (user_id,)
+            )
+            await db.execute(
+                "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                (user_id,)
+            )
+            await db.commit()
+            return False
+        
+        return True
+
+        return datetime.now() < expiry

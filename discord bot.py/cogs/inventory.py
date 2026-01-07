@@ -1,915 +1,515 @@
-import random
 import discord
-import aiosqlite
 from discord.ext import commands
-from config import OWNER_ID, DB_PATH
-from utils.database import (
-    get_user_data, get_chest_count, get_user_pulls,
-    update_user_data, ensure_user_db, update_chest_count,
-    get_chest_inventory, change_chest_type_count, add_chest_with_type,
-    add_account_exp, get_account_level, grant_level_rewards
-)
-from utils.database import _exp_required_for_level
-from utils.database import award_achievement
-from utils.database import get_shop_purchases_today, increment_shop_purchases, get_shop_item_purchases_today, increment_shop_item_purchases, get_user_item_count, add_user_item
-from utils.constants import city_lookup
-from utils.emoji import get_emoji
+import aiosqlite
+from datetime import datetime, timedelta
+from config import DB_PATH
+from utils.database import require_enrollment
 from utils.embed import send_embed
+
+
+# Import item definitions from blackmarket
+from cogs.blackmarket import ITEMS, RARITY_COLORS
+
+
+class BankUpgradeView(discord.ui.View):
+    def __init__(self, user_id: int, item_id: str):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.item_id = item_id
+    
+    @discord.ui.button(label="Deposit Limit +2M", style=discord.ButtonStyle.green, emoji="📊")
+    async def deposit_upgrade(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("This isn't your upgrade!", ephemeral=True)
+        
+        async with aiosqlite.connect(DB_PATH) as db:
+            # Ensure bank_capacity column exists
+            try:
+                await db.execute("ALTER TABLE users ADD COLUMN bank_capacity INTEGER DEFAULT 1000000")
+                await db.commit()
+            except:
+                pass
+            
+            # Increase bank capacity
+            await db.execute(
+                "UPDATE users SET bank_capacity = COALESCE(bank_capacity, 1000000) + 2000000 WHERE user_id = ?",
+                (self.user_id,)
+            )
+            # Remove item from inventory
+            await db.execute(
+                "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                (self.user_id, self.item_id)
+            )
+            await db.execute(
+                "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                (self.user_id,)
+            )
+            await db.commit()
+        
+        embed = discord.Embed(
+            title="<a:Check:1437951818452832318> Bank Deposit Upgraded!",
+            description="Your bank deposit limit increased by **+2,000,000** <:mora:1437958309255577681>!",
+            color=0x2ECC71
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.stop()
+    
+    @discord.ui.button(label="Loan Limit +250K", style=discord.ButtonStyle.blurple, emoji="💰")
+    async def loan_upgrade(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            return await interaction.response.send_message("This isn't your upgrade!", ephemeral=True)
+        
+        async with aiosqlite.connect(DB_PATH) as db:
+            # Increase loan limit
+            await db.execute(
+                "UPDATE users SET max_loan = COALESCE(max_loan, 500000) + 250000 WHERE user_id = ?",
+                (self.user_id,)
+            )
+            # Remove item from inventory
+            await db.execute(
+                "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                (self.user_id, self.item_id)
+            )
+            await db.execute(
+                "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                (self.user_id,)
+            )
+            await db.commit()
+        
+        embed = discord.Embed(
+            title="<a:Check:1437951818452832318> Loan Limit Upgraded!",
+            description="Your maximum loan amount increased by **+250,000** <:mora:1437958309255577681>!",
+            color=0x2ECC71
+        )
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.stop()
+
 
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        # Shop items keyed by numeric ID for easy purchase via `!buy <id> <amount>`
-        # id: {key, name, price, daily_cap}
-        self.shop_items = {
-            1: {"key": "random", "name": "<:random:1437977751520018452> Random Chest", "price": 5_000, "daily_cap": 20},
-            2: {"key": "exp_bottle", "name": "EXP Bottle (250 EXP)", "price": 15_000, "daily_cap": 100},
-        }
 
-    @commands.command(name="chest")
-    async def open_chest(self, ctx, *inv_args):
-        """Open chests. Usage examples:
-        - `!chest` opens 1 common chest
-        - `!chest 3` opens 3 common chests
-        - `!chest exquisite 2` opens 2 exquisite chests
-        Accepts flexible parsing; chest type and amount can be provided in any order.
-        """
-        try:
-            # flexible args parsing: chest type and amount
-            # Now enforce: when opening more than 1 chest, the user MUST specify the chest type.
-            allowed = ('common', 'exquisite', 'precious', 'luxurious')
-            chest_type = 'common'
-            qty = 1
-            parts = ctx.message.content.strip().split()
-            args = parts[1:]
-
-            if len(args) == 0:
-                chest_type = 'common'
-                qty = 1
-            elif len(args) == 1:
-                # single token: could be a type or an amount
-                if args[0].isdigit():
-                    qty = int(args[0])
-                    # require explicit type when qty > 1
-                    if qty > 1:
-                        await ctx.send("When opening more than 1 chest you must specify the chest type. Example: `!chest common 10`\nValid types: common, exquisite, precious, luxurious")
-                        return
-                    chest_type = 'common'
-                else:
-                    chest_type = args[0].lower()
-                    qty = 1
-            else:
-                # two or more args: first is type, second is amount
-                chest_type = args[0].lower()
-                try:
-                    qty = int(args[1])
-                except Exception:
-                    await ctx.send("Please provide a numeric amount. Usage: `!chest <type> <amount>`")
-                    return
-
-            if qty < 1:
-                await ctx.send("Amount must be at least 1.")
-                return
-
-            # normalize and validate chest type
-            if chest_type not in allowed:
-                await ctx.send("Unknown chest type. Valid types: common, exquisite, precious, luxurious")
-                return
-
-            inv = await get_chest_inventory(ctx.author.id)
-            available = inv.get(chest_type, 0)
-            if available < qty:
-                await ctx.send(f"You only have {available} {chest_type} chest(s).")
-                return
-
-            total_mora = 0
-            total_dust = 0
-            total_fates = 0
-            total_bottles = 0
-
-            for _ in range(qty):
-                if chest_type == 'common':
-                    reward_mora = random.randint(200, 600)
-                    reward_dust = random.randint(10, 25)
-                    reward_fate = 1 if random.random() < 0.05 else 0
-                    # common: 80% chance to give 1 bottle, 10% chance to double to 2
-                    bottles = 0
-                    if random.random() < 0.80:
-                        bottles = 1
-                        if random.random() < 0.10:
-                            bottles = 2
-                    total_bottles += bottles
-                elif chest_type == 'exquisite':
-                    reward_mora = random.randint(500, 1100)
-                    reward_dust = random.randint(25, 55)
-                    reward_fate = 1 if random.random() < 0.15 else 0
-                    # exquisite: 1 bottle guaranteed, 10% chance to double
-                    bottles = 1
-                    if random.random() < 0.10:
-                        bottles = 2
-                    total_bottles += bottles
-                elif chest_type == 'precious':
-                    reward_mora = random.randint(1000, 2200)
-                    reward_dust = random.randint(50, 120)
-                    reward_fate = 1
-                    # precious may sometimes grant an extra fate (10%)
-                    if random.random() < 0.10:
-                        reward_fate += 1
-                    # precious: 1 bottle guaranteed, 50% chance to double
-                    bottles = 1
-                    if random.random() < 0.50:
-                        bottles = 2
-                    total_bottles += bottles
-                elif chest_type == 'luxurious':
-                    reward_mora = random.randint(2000, 4200)
-                    reward_dust = random.randint(100, 260)
-                    reward_fate = 1
-                    # luxurious: 20% chance to double fate
-                    if random.random() < 0.20:
-                        reward_fate += 1
-                    # luxurious: gives 2 bottles, 20% chance to double to 4
-                    bottles = 2
-                    if random.random() < 0.20:
-                        bottles = 4
-                    total_bottles += bottles
-                else:
-                    # treat unknown as common
-                    reward_mora = random.randint(200, 600)
-                    reward_dust = random.randint(10, 25)
-                    reward_fate = 1 if random.random() < 0.05 else 0
-
-                total_mora += reward_mora
-                total_dust += reward_dust
-                total_fates += reward_fate
-                # decrement one chest immediately to ensure it's consumed even if later steps fail
-                try:
-                    new_count = await change_chest_type_count(ctx.author.id, chest_type, -1)
-                except ValueError as ve:
-                    # not enough chests (race or concurrent change); stop and inform user
-                    await ctx.send(f"Could not open {chest_type} chest: {ve}")
-                    break
-                except Exception as e:
-                    print(f"Failed to decrement {chest_type} chest for user {ctx.author.id} during open loop: {e}")
-                    await ctx.send("Internal error while opening the chest.")
-                    break
-
-            # apply accumulated rewards once
-            data = await get_user_data(ctx.author.id)
-            data['mora'] += total_mora
-            data['dust'] += total_dust
-            data['fates'] += total_fates
-            await update_user_data(ctx.author.id, mora=data['mora'], dust=data['dust'], fates=data['fates'])
-
-            # cap bottles to a maximum of 5 across the entire open operation
-            if total_bottles > 0:
-                capped = min(total_bottles, 5)
-                try:
-                    await add_user_item(ctx.author.id, 'exp_bottle', capped)
-                except Exception as e:
-                    print(f"Failed to add exp bottles to user inventory: {e}")
-                total_bottles = capped
-
-            # Award a simple "first chest" achievement (idempotent)
-            try:
-                await award_achievement(ctx.author.id, 'first_chest', 'Opened a Chest', 'You opened your first chest.')
-            except Exception:
-                pass
-
-            # award account EXP for opening chests (tunable per chest rarity)
-            try:
-                chest_exp_map = {'common': 10, 'exquisite': 25, 'precious': 50, 'luxurious': 100}
-                gained_exp = chest_exp_map.get(chest_type, 10) * qty
-                await add_account_exp(ctx.author.id, gained_exp, source='chest')
-            except Exception as e:
-                print(f"Error awarding account EXP for chest open: {e}")
-
-            # inventory updated; no debug logging here
-
-            # Try to get custom emoji; fallback to unicode icons
-            mora_emoji = "<:mora:1437958309255577681>"
-            dust_emoji = "<:mora:1437480155952975943>"
-            fate_emoji = "<:fate:1437488656767254528>"
-
-            # Chest icons
-            chest_icons = {
-                'common': '<:cajitadelexplorador:1437473147833286676>',
-                'exquisite': '<:cajitaplatino:1437473086571286699>',
-                'precious': '<:cajitapremium:1437473125095837779>',
-                'luxurious': '<:cajitadiamante:1437473169475764406>'
-            }
-            chest_icon = chest_icons.get(chest_type, '')
-
-            embed = discord.Embed(
-                title=f"{chest_icon} Opened {qty} {chest_type.capitalize()} Chest{'s' if qty != 1 else ''}!",
-                color=0xffd700  # Gold color
-            )
-            
-            # Build rewards list like inventory format
-            rewards = []
-            rewards.append(f"{mora_emoji}  Mora : `{total_mora:,}`")
-            rewards.append(f"{dust_emoji}  Tide Coins : `{total_dust}`")
-            if total_fates:
-                rewards.append(f"{fate_emoji}  Intertwined Fate(s) : `{total_fates}`")
-            if total_bottles:
-                rewards.append(f"<:exp:1437553839359397928>  EXP Bottle(s) : `{total_bottles}`")
-            
-            embed.description = "\n".join(rewards)
-            await send_embed(ctx, embed)
-        except Exception as e:
-            from utils.logger import setup_logger
-            logger = setup_logger("Inventory")
-            logger.error(f"Error in chest command: {e}", exc_info=True)
-            await ctx.send("❌ There was an error opening the chest. Please try again.")
-
-    @commands.command(name="inventory", aliases=["inv"])
+    @commands.command(name="i", aliases=["inv", "inventory", "bag"])
     async def inventory(self, ctx):
-        # inventory command invoked
-
-        await ensure_user_db(ctx.author.id)
-        data = await get_user_data(ctx.author.id)
-        chest_inv = await get_chest_inventory(ctx.author.id)
-        items = []
-        if data['fates'] > 0:
-            items.append(f"<:fate:1437488656767254528>  Intertwined Fates : `{data['fates']}`")
-        chest_icons = {
-            'common': '<:cajitadelexplorador:1437473147833286676>',
-            'exquisite': '<:cajitaplatino:1437473086571286699>',
-            'precious': '<:cajitapremium:1437473125095837779>',
-            'luxurious': '<:cajitadiamante:1437473169475764406>'
-        }
-        for k in ('common', 'exquisite', 'precious', 'luxurious'):
-            cnt = chest_inv.get(k, 0)
-            if cnt:
-                items.append(f"{chest_icons[k]}  {k.capitalize()} Chests : `{cnt}`")
-
-        try:
-            bottles = await get_user_item_count(ctx.author.id, 'exp_bottle')
-            if bottles:
-                items.append(f"<:exp:1437553839359397928>  EXP Bottles : `{bottles}`")
-            
-            hydro_essence = await get_user_item_count(ctx.author.id, 'hydro_essence')
-            if hydro_essence:
-                items.append(f"<:essence:1437463601479942385>  Hydro Essence : `{hydro_essence}`")
-            
-            hydro_crystal = await get_user_item_count(ctx.author.id, 'hydro_crystal')
-            if hydro_crystal:
-                items.append(f"<:crystal:1437458982989205624>  Hydro Crystal : `{hydro_crystal}`")
-        except Exception:
-            pass
-
-        description = "\n".join(items) if items else "No items in inventory."
-        embed = discord.Embed(
-            title=f"{ctx.author.display_name}'s Inventory",
-            description=description,
-            color=0x2ecc71
-        )
-        await send_embed(ctx, embed)
-
-    @commands.group(name="shop", invoke_without_command=True)
-    async def shop(self, ctx):
-        """Show shop items and pricing."""
-        # Get daily purchases for this user
-        bought_random = await get_shop_item_purchases_today(ctx.author.id, 'random')
-        bought_bottles = await get_shop_item_purchases_today(ctx.author.id, 'exp_bottle')
-        
-        embed = discord.Embed(title="Shop", color=0x3498db)
-        lines = []
-        
-        lines.append(f"1. <:random:1437977751520018452> Random Chest - `{5_000:,}` <:mora:1437958309255577681> - {bought_random}/20")
-        
-        lines.append(f"2. <:exp:1437553839359397928> EXP Bottle - `{15_000:,}` <:mora:1437958309255577681> - {bought_bottles}/100")
-        
-        embed.description = "\n".join(lines)
-        embed.set_footer(text="Buy with `!buy <id> <amount>`")
-        await send_embed(ctx, embed)
-
-    @shop.command(name="buy")
-    async def shop_buy(self, ctx, item: str = None, amount: int = 1):
-        """Buy items from the shop. Usage: !shop buy random 3"""
-        try:
-            # Allow string names or numeric IDs passed as string
-            item_key = None
-            if item is None:
-                await ctx.send("Usage: `!shop buy <id|name> <amount>`")
-                return
-            # try parse as ID
-            try:
-                iid = int(item)
-                entry = self.shop_items.get(iid)
-                if not entry:
-                    await ctx.send(f"No shop item with id {iid}.")
-                    return
-                item_key = entry['key']
-                PRICE = entry['price']
-                DAILY_CAP = entry['daily_cap']
-            except Exception:
-                # treat as name
-                item_l = item.lower()
-                if item_l in ("random", "random_chest", "chest", "randomchest"):
-                    item_key = 'random'
-                    PRICE = 5_000
-                    DAILY_CAP = 20
-                elif item_l in ("exp bottle", "exp_bottle", "expbottle", "bottle"):
-                    item_key = 'exp_bottle'
-                    PRICE = 15_000
-                    DAILY_CAP = 100
-                else:
-                    await ctx.send("Usage: `!shop buy <id|name> <amount>` - supported: `random`, `exp bottle`.")
-                    return
-
-            # clamp amount
-            try:
-                qty = int(amount)
-            except Exception:
-                qty = 1
-            if qty < 1:
-                await ctx.send("Amount must be at least 1.")
-                return
-
-            # daily cap (use per-item counter for item-specific caps like exp bottles)
-            if item_key == 'exp_bottle':
-                bought_today = await get_shop_item_purchases_today(ctx.author.id, 'exp_bottle')
-            elif item_key == 'random':
-                bought_today = await get_shop_item_purchases_today(ctx.author.id, 'random')
-            else:
-                bought_today = await get_shop_purchases_today(ctx.author.id)
-            remaining = max(0, DAILY_CAP - bought_today)
-            if remaining <= 0:
-                await ctx.send("You've reached the daily purchase limit for this item. Come back tomorrow.")
-                return
-            if qty > remaining:
-                await ctx.send(f"You can only buy up to {remaining} more of this item today.")
-                return
-            total_cost = PRICE * qty
-            data = await get_user_data(ctx.author.id)
-            if data.get('mora', 0) < total_cost:
-                await ctx.send(f"You need {total_cost:,} Mora to buy {qty} chest(s). Your balance: {data.get('mora',0):,} Mora.")
-                return
-
-            if item_key == 'exp_bottle':
-                # store bottles in user inventory instead of granting immediate EXP
-                try:
-                    # ensure user rows exist
-                    await ensure_user_db(ctx.author.id)
-                    async with aiosqlite.connect(DB_PATH) as db:
-                        await db.execute('BEGIN')
-                        # check balance
-                        async with db.execute("SELECT mora FROM users WHERE user_id=?", (ctx.author.id,)) as cur:
-                            row = await cur.fetchone()
-                            cur_mora = int(row[0] or 0) if row else 0
-                        if cur_mora < total_cost:
-                            await db.execute('ROLLBACK')
-                            await ctx.send(f"You need {total_cost:,} Mora to buy {qty} item(s). Your balance: {cur_mora:,} Mora.")
-                            return
-                        new_mora = cur_mora - total_cost
-                        await db.execute("UPDATE users SET mora=? WHERE user_id=?", (new_mora, ctx.author.id))
-
-                        # upsert user_items for exp_bottle
-                        await db.execute("INSERT OR IGNORE INTO user_items (user_id, item_key, count) VALUES (?, ?, ?)", (ctx.author.id, 'exp_bottle', 0))
-                        await db.execute("UPDATE user_items SET count = count + ? WHERE user_id=? AND item_key=?", (qty, ctx.author.id, 'exp_bottle'))
-                        async with db.execute("SELECT count FROM user_items WHERE user_id=? AND item_key=?", (ctx.author.id, 'exp_bottle')) as cur2:
-                            newr = await cur2.fetchone()
-                            new_count = newr[0] if newr and newr[0] is not None else 0
-
-                        # upsert per-item and global daily counters
-                        today = __import__('datetime').date.today().isoformat()
-                        await db.execute(
-                            "INSERT INTO shop_item_purchases (user_id, date, item_key, count) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, date, item_key) DO UPDATE SET count = shop_item_purchases.count + ?",
-                            (ctx.author.id, today, 'exp_bottle', qty, qty)
-                        )
-                        await db.execute(
-                            "INSERT INTO shop_purchases (user_id, date, count) VALUES (?, ?, ?) ON CONFLICT(user_id, date) DO UPDATE SET count = shop_purchases.count + ?",
-                            (ctx.author.id, today, qty, qty)
-                        )
-
-                        await db.commit()
-
-                    # Show updated progress
-                    new_bought = bought_today + qty
-                    embed = discord.Embed(title="EXP Bottle Purchase", color=0x1abc9c)
-                    parts = [
-                        f"Spent: `{total_cost:,}` <:mora:1437958309255577681>",
-                        f"Added: `{qty}` <:exp:1437553839359397928> EXP Bottle(s)",
-                        f"Daily progress: {new_bought}/100"
-                    ]
-                    embed.description = "\n".join(parts)
-                    await send_embed(ctx, embed)
-                except Exception as e:
-                    print(f"Failed to complete exp bottle purchase: {e}")
-                    await ctx.send("Could not complete purchase right now.")
-            else:
-                # choose chest types using weights: common 60, exquisite 25, precious 15, luxurious 10 (weights will be normalized)
-                weights = {'common': 60, 'exquisite': 25, 'precious': 15, 'luxurious': 10}
-                types = list(weights.keys())
-                w = list(weights.values())
-
-                # compute awarded chest counts first (no DB ops yet)
-                awarded = {k: 0 for k in types}
-                for _ in range(qty):
-                    pick = random.choices(types, weights=w, k=1)[0]
-                    awarded[pick] += 1
-
-                # perform DB updates in one transaction
-                try:
-                    await ensure_user_db(ctx.author.id)
-                    async with aiosqlite.connect(DB_PATH) as db:
-                        await db.execute('BEGIN')
-                        # check balance
-                        async with db.execute("SELECT mora FROM users WHERE user_id=?", (ctx.author.id,)) as cur:
-                            row = await cur.fetchone()
-                            cur_mora = int(row[0] or 0) if row else 0
-                        if cur_mora < total_cost:
-                            await db.execute('ROLLBACK')
-                            await ctx.send(f"You need {total_cost:,} Mora to buy {qty} chest(s). Your balance: {cur_mora:,} Mora.")
-                            return
-                        new_mora = cur_mora - total_cost
-                        await db.execute("UPDATE users SET mora=? WHERE user_id=?", (new_mora, ctx.author.id))
-
-                        # ensure chest_inventory row exists
-                        await db.execute("INSERT OR IGNORE INTO chest_inventory (user_id, common, exquisite, precious, luxurious) VALUES (?, ?, ?, ?, ?)", (ctx.author.id, 0, 0, 0, 0))
-                        # apply awarded chest increments
-                        for k, amt in awarded.items():
-                            if amt:
-                                await db.execute(f"UPDATE chest_inventory SET {k} = {k} + ? WHERE user_id=?", (amt, ctx.author.id))
-
-                        # update legacy chests.count
-                        async with db.execute("SELECT count FROM chests WHERE user_id=?", (ctx.author.id,)) as cur2:
-                            crow = await cur2.fetchone()
-                            legacy = int(crow[0] or 0) if crow else 0
-                        legacy_new = legacy + sum(awarded.values())
-                        await db.execute("INSERT OR IGNORE INTO chests (user_id, count) VALUES (?, 0)", (ctx.author.id,))
-                        await db.execute("UPDATE chests SET count = ? WHERE user_id=?", (legacy_new, ctx.author.id))
-
-                        # increment daily purchases
-                        today = __import__('datetime').date.today().isoformat()
-                        # Track per-item for 'random'
-                        await db.execute(
-                            "INSERT INTO shop_item_purchases (user_id, date, item_key, count) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, date, item_key) DO UPDATE SET count = shop_item_purchases.count + ?",
-                            (ctx.author.id, today, 'random', qty, qty)
-                        )
-                        await db.execute(
-                            "INSERT INTO shop_purchases (user_id, date, count) VALUES (?, ?, ?) ON CONFLICT(user_id, date) DO UPDATE SET count = shop_purchases.count + ?",
-                            (ctx.author.id, today, qty, qty)
-                        )
-
-                        await db.commit()
-
-                    # Show updated progress
-                    new_bought = bought_today + qty
-                    
-                    embed = discord.Embed(title="Shop Purchase", color=0xffd700)
-                    parts = [f"Spent: `{total_cost:,}` <:mora:1437958309255577681>"]
-                    
-                    chest_icons = {
-                        'common': '<:cajitadelexplorador:1437473147833286676>',
-                        'exquisite': '<:cajitaplatino:1437473086571286699>',
-                        'precious': '<:cajitapremium:1437473125095837779>',
-                        'luxurious': '<:cajitadiamante:1437473169475764406>'
-                    }
-                    
-                    chest_parts = []
-                    for k in types:
-                        if awarded.get(k, 0):
-                            icon = chest_icons.get(k, '')
-                            chest_parts.append(f"{icon} {awarded[k]}x {k}")
-                    if chest_parts:
-                        parts.append("You received:\n" + "\n".join(chest_parts))
-                    
-                    parts.append(f"\nDaily progress: {new_bought}/20")
-                    embed.description = "\n".join(parts)
-                    await send_embed(ctx, embed)
-                except Exception as e:
-                    print(f"Failed to complete chest shop purchase: {e}")
-                    await ctx.send("Could not complete purchase right now.")
-        except Exception as e:
-            print(f"Error in shop buy: {e}")
-            await ctx.send("Could not complete purchase right now.")
-
-    @commands.command(name="buy")
-    async def buy(self, ctx, item_id: int, amount: int = 1):
-        """Quick alias to buy by numeric shop id: `!buy 1 5`"""
-        try:
-            # delegate to shop_buy by passing the id as a string (shop_buy accepts id or name)
-            await self.shop_buy(ctx, str(item_id), amount)
-        except Exception as e:
-            print(f"Error in buy alias: {e}")
-            await ctx.send("Could not process quick buy. Try `!shop buy <id> <amount>`.")
-
-    @commands.command(name="bal")
-    async def balance(self, ctx):
-        data = await get_user_data(ctx.author.id)
-        embed = discord.Embed(
-            title=f"<:mora:1437958309255577681> {ctx.author.display_name}'s Wallet",
-            color=0xf1c40f
-        )
-        embed.add_field(
-            name="<:mora:1437958309255577681> Mora",
-            value=f"`{data['mora']:,}`",
-            inline=True
-        )
-        embed.add_field(
-            name="<:mora:1437480155952975943> Tide Coins",
-            value=f"`{data['dust']:,}`",
-            inline=True
-        )
-        await send_embed(ctx, embed)
-
-    @commands.command(name="mci")
-    async def my_card_info(self, ctx, *, card_name: str):
-        try:
-            pulls = await get_user_pulls(ctx.author.id)
-            if not pulls:
-                await ctx.send("You don't have any cards yet.")
-                return
-
-            card = None
-            for p in pulls:
-                if p[0].lower() == card_name.lower():
-                    card = p
-                    break
-
-            if not card:
-                await ctx.send(f"You don't own the card {card_name}.")
-                return
-
-            character_name, rarity, count, relics, element, hp, atk = card
-            city = city_lookup.get(character_name, "Unknown")
-
-            # choose embed color by rarity: 3 -> green, 4 -> violet, 5 -> gold
-            try:
-                # rarity may be an int or a string like '3★'
-                import re
-                if isinstance(rarity, int):
-                    rnum = int(rarity)
-                else:
-                    m = re.search(r"(\d+)", str(rarity))
-                    rnum = int(m.group(1)) if m else 0
-            except Exception:
-                rnum = 0
-
-            if rnum >= 5:
-                color = 0xFFD700
-            elif rnum == 4:
-                color = 0x9b59b6
-            else:
-                color = 0x2ecc71
-
-            # Do not show count or relics per user request
-            embed = discord.Embed(
-                title=f"{character_name} ({rarity})",
-                color=color
-            )
-            embed.add_field(name="HP", value=hp, inline=True)
-            embed.add_field(name="ATK", value=atk, inline=True)
-            embed.add_field(name="Element", value=element, inline=True)
-            embed.add_field(name="City", value=city, inline=True)
-            await send_embed(ctx, embed)
-
-        except Exception as e:
-            await ctx.send("Something went wrong while fetching that card.")
-            print(f"Error in !mci: {e}")
-
-    @commands.command(name="mycards", aliases=["mc"])
-    async def mycards(self, ctx, *, rarity_filter: str = None):
-        """Show owned cards. Optional filter: `!mc 5 star` or `!mc 4` to show only that rarity.
-        Cards are listed from lowest rarity to highest by default.
-        """
-        pulls = await get_user_pulls(ctx.author.id)
-        if not pulls:
-            await ctx.send("You don't have any cards yet.")
+        """View your inventory"""
+        if not await require_enrollment(ctx):
             return
-        # helper to extract numeric rarity (e.g., '5★' -> 5)
-        import re
-        def rarity_num(r):
-            try:
-                if isinstance(r, int):
-                    return int(r)
-                m = re.search(r"(\d+)", str(r))
-                return int(m.group(1)) if m else 0
-            except Exception:
-                return 0
 
-        # optional filtering by rarity (e.g., '5 star', '5', '5★')
-        if rarity_filter:
-            rf = rarity_filter.lower().strip()
-            m = re.search(r"(\d+)", rf)
-            if m:
-                want = int(m.group(1))
-                pulls = [p for p in pulls if rarity_num(p[1]) == want]
-            else:
-                # try textual numbers (e.g., 'five')
-                txt_map = {'three':3, 'four':4, 'five':5}
-                for word, num in txt_map.items():
-                    if word in rf:
-                        pulls = [p for p in pulls if rarity_num(p[1]) == num]
-                        break
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT item_id, quantity, activated_at FROM inventory WHERE user_id = ? ORDER BY quantity DESC",
+                (ctx.author.id,)
+            ) as cursor:
+                items = await cursor.fetchall()
 
-        # sort by rarity number ascending (lowest to highest), then by name
-        pulls.sort(key=lambda x: (rarity_num(x[1]), x[0]))
-        items_per_page = 5
-        pages = [pulls[i:i + items_per_page] for i in range(0, len(pulls), items_per_page)]
-        total_pages = len(pages)
-        current_page = 0
-
-        def create_embed(page_index):
-            title_suffix = f" ({page_index+1}/{total_pages})"
-            if rarity_filter:
-                title = f"{ctx.author.display_name}'s {rarity_filter.strip()} Card Collection{title_suffix}"
-            else:
-                title = f"{ctx.author.display_name}'s Card Collection{title_suffix}"
+        if not items:
             embed = discord.Embed(
-                title=title,
-                color=0x00ff00
+                title=f"{ctx.author.display_name}'s Inventory",
+                description="Your inventory is empty!\n\nVisit the Black Market with `gblackmarket` to purchase items.",
+                color=0x95A5A6
             )
-            for card in pages[page_index]:
-                name, rarity, count, relics, element, hp, atk = card
-                embed.add_field(
-                    name=f"{name} ({rarity})",
-                    value=f"HP: {hp} | ATK: {atk} | Element: {element}",
-                    inline=False
-                )
-            return embed
+            return await ctx.send(embed=embed)
 
-        message = await send_embed(ctx, create_embed(current_page))
-
-        class CardPaginator(discord.ui.View):
-            def __init__(self):
-                super().__init__(timeout=60)
-
-            @discord.ui.button(label="⬅️", style=discord.ButtonStyle.gray)
-            async def previous(self, interaction: discord.Interaction, button: discord.ui.Button):
-                nonlocal current_page
-                if current_page > 0:
-                    current_page -= 1
-                    await interaction.response.edit_message(embed=create_embed(current_page))
-                else:
-                    await interaction.response.defer()
-
-            @discord.ui.button(label="➡️", style=discord.ButtonStyle.gray)
-            async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
-                nonlocal current_page
-                if current_page < total_pages - 1:
-                    current_page += 1
-                    await interaction.response.edit_message(embed=create_embed(current_page))
-                else:
-                    await interaction.response.defer()
-
-        # attach the paginator view to the message we just sent
-        await message.edit(view=CardPaginator())
-
-    # Temporary admin audit/repair commands removed — no longer needed after migration
-
-    @commands.command(name="relicinventory", aliases=["rinv"])
-    async def relicinventory(self, ctx):
-        pulls = await get_user_pulls(ctx.author.id)
-        relic_items = [p for p in pulls if p[3] > 0]
-        if not relic_items:
-            await ctx.send("You don't have any relics yet.")
-            return
-        description = "\n".join([f"{p[0]} ({p[1]}) | Relics: {p[3]}" for p in relic_items])
+        # Check premium status
+        premium_cog = self.bot.get_cog('Premium')
+        custom_badge = ""
+        if premium_cog:
+            is_premium = await premium_cog.is_premium(ctx.author.id)
+            if is_premium:
+                badge = await premium_cog.get_custom_badge(ctx.author.id)
+                if badge:
+                    custom_badge = f" {badge}"
+        
         embed = discord.Embed(
-            title=f"{ctx.author.display_name}'s Relic Inventory",
-            description=description
+            title=f"{ctx.author.display_name}{custom_badge}'s Inventory",
+            description="Use `guse <item>` to activate items",
+            color=0x3498DB
         )
-        await send_embed(ctx, embed)
+        embed.set_thumbnail(url=ctx.author.display_avatar.url)
 
-    @commands.group(name="level", invoke_without_command=True)
-    async def level(self, ctx):
-        """Show your account level and EXP progress. Use `!level rewards` to check upcoming rewards."""
-        try:
-            level, exp, needed = await get_account_level(ctx.author.id)
-            stage = (level // 20) + 1
-
-            # Compute a compact progress bar similar to the attached mockup.
-            progress = 0.0 if not needed else min(1.0, float(exp) / float(needed))
-            segments = 15
-            filled = int(round(progress * segments))
-            filled = max(0, min(segments, filled))
-            # use ▰ for filled and ▱ for empty bars
-            bar_filled = '▰' * filled
-            bar_empty = '▱' * (segments - filled)
-            # build progress bar (no trailing star)
-            progress_bar = f"{bar_filled}{bar_empty}"
-
-            # Ranks concept: show (stage - 1) as "Ranks"
-            ranks = max(0, stage - 1)
-
-            # Build embed with thumbnail (user avatar) and compact layout
-            # dark purple chosen for embed color to match requested style
-            per_level_mora = 1000 * stage
-            embed = discord.Embed(title="Level Progression:", description=f"`{progress_bar}`", color=0x6a0dad)
-            # small summary fields on the left (no emoji)
-            embed.add_field(name="Level", value=f"{level}", inline=True)
-            embed.add_field(name="Ranks", value=f"{ranks}", inline=True)
-            embed.add_field(name="EXP Progress", value=f"`{exp}/{needed}` ({int(progress*100)}%)", inline=False)
-
-            # Short directions to claim rewards (details available via the Check Rewards button)
-            embed.add_field(
-                name="Level Rewards",
-                value="Claim level rewards with `!level rewards` (interactive) or `!level claimall` to claim all unclaimed rewards.",
-                inline=False,
-            )
-
-            embed.set_footer(text="Use the button below to check upcoming rewards.")
-
-            class RewardsView(discord.ui.View):
-                def __init__(self):
-                    super().__init__(timeout=None)
-
-                @discord.ui.button(label="Check Rewards", style=discord.ButtonStyle.primary)
-                async def check(self, interaction: discord.Interaction, button: discord.ui.Button):
-                    # compute next level rewards (preview only)
-                    lvl = level + 1
-                    next_stage = (lvl // 20) + 1
-                    per_lvl_mora = 1000 * next_stage
-                    desc = (
-                        f"Per level: <:cajitadelexplorador:1437473147833286676> 1x Common Chest, {per_lvl_mora:,} Mora (Stage {next_stage}).\n"
-                        f"Every 10th level: additional {5000 * next_stage:,} Mora + <:cajitaplatino:1437473086571286699> 1x Exquisite Chest.\n"
-                        "Every 20th level: a Stage badge."
-                    )
-                    embed2 = discord.Embed(title=f"Rewards preview for level {lvl}", description=desc, color=0x2ecc71)
-                    await interaction.response.send_message(embed=embed2, ephemeral=True)
-
-            await send_embed(ctx, embed, view=RewardsView())
-        except Exception as e:
-            print(f"Error in !level: {e}")
-            await ctx.send("Could not fetch level info right now.")
+        items_text = []
+        for item_id, quantity, activated_at in items:
+            if item_id not in ITEMS:
+                continue
+            
+            item = ITEMS[item_id]
+            items_text.append(f"{item['emoji']} **{item['name']}**: {quantity}")
+        
+        embed.description = "\n".join(items_text) if items_text else "Your inventory is empty!"
+        embed.set_footer(text="Use 'guse <item>' to activate items")
+        await ctx.send(embed=embed)
 
     @commands.command(name="use")
-    async def use_item(self, ctx, item: str = None, amount: int = 1):
-        """Use a consumable item from your inventory."""
-        try:
-            if item is None:
-                await ctx.send("**Usage:** `!use <item> <amount>`")
-                return
+    async def use_item(self, ctx, *, item_name: str = None):
+        """Use/activate an item from your inventory"""
+        if not await require_enrollment(ctx):
+            return
+
+        if item_name is None:
+            return await ctx.send("<a:X_:1437951830393884788> Usage: `guse <item name>`\nExample: `guse xp booster`")
+
+        # Find item by name or alias
+        item_id = None
+        item_name_lower = item_name.lower().replace(" ", "_")
+        
+        for iid, item in ITEMS.items():
+            # Check item ID and name
+            if iid == item_name_lower or item["name"].lower() == item_name.lower():
+                item_id = iid
+                break
+            # Check aliases if they exist
+            if "aliases" in item:
+                for alias in item["aliases"]:
+                    if alias.lower() == item_name.lower() or alias.lower().replace(" ", "_") == item_name_lower:
+                        item_id = iid
+                        break
+            if item_id:
+                break
+
+        if item_id is None:
+            return await ctx.send("<a:X_:1437951830393884788> Item not found!")
+
+        item = ITEMS[item_id]
+
+        # Check if user owns the item
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute(
+                "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = ?",
+                (ctx.author.id, item_id)
+            ) as cursor:
+                result = await cursor.fetchone()
+
+            if not result or result[0] <= 0:
+                return await ctx.send(f"<a:X_:1437951830393884788> You don't own {item['emoji']} **{item['name']}**!")
+
+            # Special handling for permanent items
+            if item["type"] == "permanent":
+                if item_id == "bankers_key":
+                    # Ensure bank_capacity column exists
+                    try:
+                        await db.execute("ALTER TABLE users ADD COLUMN bank_capacity INTEGER DEFAULT 1000000")
+                        await db.commit()
+                    except:
+                        pass
+                    
+                    # Apply bank capacity increase
+                    await db.execute(
+                        "UPDATE users SET bank_capacity = COALESCE(bank_capacity, 1000000) + 300000 WHERE user_id = ?",
+                        (ctx.author.id,)
+                    )
+                    # Remove from inventory
+                    await db.execute(
+                        "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                        (ctx.author.id, item_id)
+                    )
+                    await db.execute(
+                        "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                        (ctx.author.id,)
+                    )
+                    await db.commit()
+                    
+                    return await ctx.send(
+                        f"<a:Check:1437951818452832318> {item['emoji']} **Banker's Key** used! "
+                        f"Your bank capacity increased by **+300,000** <:mora:1437958309255577681>!"
+                    )
             
-            item_l = item.lower()
-            if item_l in ("bottle", "exp bottle", "exp_bottle", "expbottle"):
-                qty = max(1, int(amount))
-                # check user has enough bottles
-                have = await get_user_item_count(ctx.author.id, 'exp_bottle')
-                if have < qty:
-                    await ctx.send(f"You only have `{have}` bottle(s).")
-                    return
-                # consume bottles
-                try:
-                    await add_user_item(ctx.author.id, 'exp_bottle', -qty)
-                except ValueError as ve:
-                    await ctx.send(str(ve))
-                    return
-                # grant EXP
-                exp_per_bottle = 250
-                gained = exp_per_bottle * qty
-                res = None
-                try:
-                    res = await add_account_exp(ctx.author.id, gained, source='use_bottle')
-                except Exception as e:
-                    print(f"Failed to grant EXP from bottles: {e}")
-
-                # Get current exp progress
-                from utils.database import get_account_level
-                current_level, current_exp, exp_needed = await get_account_level(ctx.author.id)
-                
-                await ctx.send(
-                    f"<:exp:1437553839359397928> Used **EXP Bottle(s)**\n"
-                    f"**{gained:,}** EXP gained\n"
-                    f"*EXP Progress: {current_exp:,}/{exp_needed:,}*"
+            # Special handling for bank upgrade (choice required)
+            if item_id == "bank_upgrade":
+                embed = discord.Embed(
+                    title="<:upgrade:1457983244682268695> Bank Upgrade",
+                    description="Choose which limit to upgrade:",
+                    color=0xF1C40F
                 )
-            else:
-                await ctx.send("Unknown item. Currently supported: `bottle`.")
-        except Exception as e:
-            print(f"Error in use command: {e}")
-            await ctx.send("Could not use item right now.")
+                embed.add_field(
+                    name="📊 Bank Deposit Limit",
+                    value="+2,000,000 mora deposit capacity",
+                    inline=False
+                )
+                embed.add_field(
+                    name="💰 Loan Limit",
+                    value="+250,000 mora max loan amount",
+                    inline=False
+                )
+                
+                view = BankUpgradeView(ctx.author.id, item_id)
+                return await ctx.send(embed=embed, view=view)
+            
+            # Rob items handling
+            if item_id == "shotgun":
+                await db.execute(
+                    "INSERT OR IGNORE INTO rob_items (user_id) VALUES (?)",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE rob_items SET shotgun = 1 WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute("DELETE FROM inventory WHERE user_id = ? AND quantity <= 0", (ctx.author.id,))
+                await db.commit()
+                return await ctx.send(f"<a:Check:1437951818452832318> 🔫 **Shotgun** equipped! You now have **+20%** robbery success rate!")
+            
+            elif item_id == "thiefpack":
+                await db.execute(
+                    "INSERT OR IGNORE INTO rob_items (user_id) VALUES (?)",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE rob_items SET mask = mask + 1, night_vision = night_vision + 1, lockpicker = lockpicker + 1 WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute("DELETE FROM inventory WHERE user_id = ? AND quantity <= 0", (ctx.author.id,))
+                await db.commit()
+                return await ctx.send(f"<a:Check:1437951818452832318> 🎒 **Thief Pack** activated! Mask, Night Vision, and Lockpicker added (1 use each, +25% with full set)!")
+            
+            elif item_id == "guarddog":
+                expires = datetime.now() + timedelta(days=7)
+                await db.execute(
+                    "INSERT OR IGNORE INTO rob_items (user_id) VALUES (?)",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE rob_items SET guard_dog = 1, guard_dog_expires = ? WHERE user_id = ?",
+                    (expires.isoformat(), ctx.author.id)
+                )
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute("DELETE FROM inventory WHERE user_id = ? AND quantity <= 0", (ctx.author.id,))
+                await db.commit()
+                return await ctx.send(f"<a:Check:1437951818452832318> 🐕 **Guard Dog** deployed! You have **+25%** defense for the next **7 days**!")
+            
+            elif item_id == "fence":
+                await db.execute(
+                    "INSERT OR IGNORE INTO rob_items (user_id) VALUES (?)",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE rob_items SET spiky_fence = 1 WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute("DELETE FROM inventory WHERE user_id = ? AND quantity <= 0", (ctx.author.id,))
+                await db.commit()
+                return await ctx.send(f"<a:Check:1437951818452832318> 🚧 **Spiky Fence** installed! You now have **+5%** permanent defense!")
+            
+            elif item_id == "lock":
+                await db.execute(
+                    "INSERT OR IGNORE INTO rob_items (user_id) VALUES (?)",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE rob_items SET lock = lock + 1 WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute("DELETE FROM inventory WHERE user_id = ? AND quantity <= 0", (ctx.author.id,))
+                await db.commit()
+                return await ctx.send(f"<a:Check:1437951818452832318> 🔒 **Lock** installed! It will **100% block** the next robbery attempt!")
 
-    @level.command(name="rewards")
-    async def level_rewards(self, ctx):
-        """Show claimable level rewards and allow claiming via buttons."""
-        try:
-            level, exp, needed = await get_account_level(ctx.author.id)
+            # Check if already active for non-stackable items
+            if not item.get("stackable", False):
+                async with db.execute(
+                    "SELECT activated_at FROM inventory WHERE user_id = ? AND item_id = ? AND activated_at IS NOT NULL",
+                    (ctx.author.id, item_id)
+                ) as cursor:
+                    active = await cursor.fetchone()
+                    
+                    if active:
+                        activated_time = datetime.fromisoformat(active[0])
+                        
+                        # Check if still active
+                        if item_id == "xp_booster":
+                            expiry = activated_time + timedelta(minutes=30)
+                            if datetime.now() < expiry:
+                                return await ctx.send(f"<a:X_:1437951830393884788> You already have an active {item['emoji']} **{item['name']}**!")
 
-            # find which levels up to current are already claimed
-            import aiosqlite
-            from config import DB_PATH
-            claimed_levels = set()
-            async with aiosqlite.connect(DB_PATH) as db:
-                async with db.execute("SELECT level FROM level_claims WHERE user_id=? AND claimed=1", (ctx.author.id,)) as cur:
-                    rows = await cur.fetchall()
-                    for r in rows:
-                        try:
-                            claimed_levels.add(int(r[0]))
-                        except Exception:
-                            pass
+            # Activate item based on type
+            if item_id == "xp_booster":
+                # Activate XP booster
+                await db.execute(
+                    "UPDATE inventory SET activated_at = ? WHERE user_id = ? AND item_id = ?",
+                    (datetime.now().isoformat(), ctx.author.id, item_id)
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<:exp:1437553839359397928> XP Booster Activated!",
+                    description="You'll gain **+50% XP** from all activities for the next **30 minutes**!",
+                    color=0xF1C40F
+                )
+                return await ctx.send(embed=embed)
 
-            all_levels = set(range(1, level + 1))
-            unclaimed = sorted(list(all_levels - claimed_levels))
+            elif item_id == "streak":
+                # Activate hot streak card
+                await db.execute(
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at, uses_remaining) VALUES (?, ?, ?, 3)",
+                    (ctx.author.id, 'streak', datetime.now().isoformat())
+                )
+                # Remove from inventory
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute(
+                    "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                    (ctx.author.id,)
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<:streak:1457966635838214247> Hot Streak Card Activated!",
+                    description="Your next **3 losses** will refund **50%** of your bet!\nValid for 48 hours.",
+                    color=0xE74C3C
+                )
+                return await ctx.send(embed=embed)
 
-            if not unclaimed:
-                embed = discord.Embed(title="No unclaimed level rewards", description=f"You are level `{level}` and have no pending level rewards to claim. Use `!level` to preview upcoming rewards.", color=0x95a5a6)
-                await send_embed(ctx, embed)
-                return
+            elif item_id == "lucky_dice":
+                # Activate lucky dice
+                await db.execute(
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at, uses_remaining) VALUES (?, ?, ?, 10)",
+                    (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                # Remove from inventory
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute(
+                    "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                    (ctx.author.id,)
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<:dice:1457965149137670186> Lucky Dice Activated!",
+                    description="You have **+5% win chance** on coinflip, dice, and rps for your next **10 games**!\nValid for 24 hours.",
+                    color=0x2ECC71
+                )
+                return await ctx.send(embed=embed)
 
-            # build embed listing unclaimed levels (limit to first 10 for UI clarity)
-            display_levels = unclaimed[:10]
-            desc = "\n".join([f"Level {l}: reward available" for l in display_levels])
-            if len(unclaimed) > len(display_levels):
-                desc += f"\n...and {len(unclaimed) - len(display_levels)} more"
+            elif item_id == "lucky_horseshoe":
+                # Activate lucky horseshoe
+                await db.execute(
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                # Update activated_at in inventory instead of removing
+                await db.execute(
+                    "UPDATE inventory SET activated_at = ? WHERE user_id = ? AND item_id = ?",
+                    (datetime.now().isoformat(), ctx.author.id, item_id)
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<:luckyhorseshoe:1458353830704975884> Lucky Horseshoe Activated!",
+                    description="You have **+3% win chance** on ALL gambling games for the next **24 hours**!",
+                    color=0xFFD700
+                )
+                return await ctx.send(embed=embed)
 
-            embed = discord.Embed(title="Unclaimed Level Rewards", description=desc, color=0x2ecc71)
-
-            class ClaimView(discord.ui.View):
-                def __init__(self, user_id, levels):
-                    super().__init__(timeout=None)
-                    self.user_id = user_id
-                    self.levels = levels
-                    # create a button per level (up to 10)
-                    for lvl in levels:
-                        btn = discord.ui.Button(label=f"Claim L{lvl}", style=discord.ButtonStyle.primary)
-                        # bind lvl to the callback
-                        async def make_cb(interaction: discord.Interaction, _lvl=lvl):
-                            if interaction.user.id != ctx.author.id:
-                                await interaction.response.send_message("This is not your reward to claim.", ephemeral=True)
-                                return
-                            # attempt to grant rewards
-                            try:
-                                ok = await grant_level_rewards(self.user_id, _lvl)
-                                if ok:
-                                    await interaction.response.send_message(f"Claimed rewards for level {_lvl}.", ephemeral=True)
-                                    # disable the button that was pressed
-                                    for item in self.children:
-                                        if isinstance(item, discord.ui.Button) and item.label == f"Claim L{_lvl}":
-                                            item.disabled = True
-                                    try:
-                                        await interaction.message.edit(view=self)
-                                    except Exception:
-                                        pass
-                                else:
-                                    await interaction.response.send_message(f"Rewards for level {_lvl} were already claimed.", ephemeral=True)
-                            except Exception as e:
-                                print(f"Error claiming level rewards: {e}")
-                                await interaction.response.send_message("Failed to claim rewards. Try again later.", ephemeral=True)
-
-                        btn.callback = make_cb
-                        self.add_item(btn)
-
-            view = ClaimView(ctx.author.id, display_levels)
-            await send_embed(ctx, embed, view=view)
-
-        except Exception as e:
-            print(f"Error in !level rewards: {e}")
-            await ctx.send("Could not fetch level rewards right now.")
-
-    @level.command(name="claimall")
-    async def level_claimall(self, ctx):
-        """Claim all unclaimed level rewards up to your current level."""
-        try:
-            level, exp, needed = await get_account_level(ctx.author.id)
-
-            # Fetch claimed levels
-            import aiosqlite
-            from config import DB_PATH
-            claimed_levels = set()
-            async with aiosqlite.connect(DB_PATH) as db:
-                async with db.execute("SELECT level FROM level_claims WHERE user_id=? AND claimed=1", (ctx.author.id,)) as cur:
-                    rows = await cur.fetchall()
-                    for r in rows:
-                        try:
-                            claimed_levels.add(int(r[0]))
-                        except Exception:
-                            pass
-
-            all_levels = set(range(1, level + 1))
-            unclaimed = sorted(list(all_levels - claimed_levels))
-
-            if not unclaimed:
-                await ctx.send("You have no unclaimed level rewards.")
-                return
-
-            claimed_now = []
-            for lvl in unclaimed:
+            elif item_id == "piggy_bank":
+                # One-time use permanent item - add protected balance
                 try:
-                    ok = await grant_level_rewards(ctx.author.id, lvl)
-                    if ok:
-                        claimed_now.append(lvl)
-                except Exception:
-                    # continue on failure for best-effort
-                    continue
+                    await db.execute("ALTER TABLE users ADD COLUMN piggy_balance INTEGER DEFAULT 0")
+                    await db.commit()
+                except:
+                    pass
+                
+                # Add 500K to piggy bank
+                await db.execute(
+                    "UPDATE users SET piggy_balance = COALESCE(piggy_balance, 0) + 500000 WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
+                # Remove from inventory
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute(
+                    "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                    (ctx.author.id,)
+                )
+                await db.commit()
+                
+                return await ctx.send(
+                    f"<a:Check:1437951818452832318> <:goldenbank:1458347495183876210> **Golden Piggy Bank** activated! "
+                    f"Stored **500,000** <:mora:1437958309255577681> in your protected piggy bank (cannot be robbed)!"
+                )
 
-            if not claimed_now:
-                await ctx.send("Could not claim your level rewards at this time. Try again later.")
-                return
+            elif item_id == "double_down":
+                # Activate double down card for next win
+                await db.execute(
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<:doubledown:1458351562966565037> Double Down Card Activated!",
+                    description="Your next gambling win will have **2x profit**!\nWorks on: Coinflip, Slots, Roulette, Blackjack, Hi-Lo, Tower, Mines, RPS, Wheel",
+                    color=0x3498DB
+                )
+                return await ctx.send(embed=embed)
+            
+            elif item_id == "golden_chip":
+                # Activate golden chip for next win
+                await db.execute(
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<:goldenchip:1457964285207646264> Golden Chip Activated!",
+                    description="Your next coinflip win will get **+30% bonus**!",
+                    color=0xFFD700
+                )
+                return await ctx.send(embed=embed)
+            
+            elif item_id == "rigged_deck":
+                # Activate rigged deck for next blackjack
+                await db.execute(
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<a:deck:1457965675082551306> Rigged Deck Activated!",
+                    description="Your next blackjack game will be a **guaranteed win**!",
+                    color=0xF1C40F
+                )
+                return await ctx.send(embed=embed)
+            
+            elif item_id == "card_counter":
+                # Activate card counter for next blackjack
+                await db.execute(
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at) VALUES (?, ?, ?)",
+                    (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<a:counter:1458347417329209426> Card Counter Activated!",
+                    description="Your next blackjack game will **reveal the dealer's hidden card**!",
+                    color=0x9B59B6
+                )
+                return await ctx.send(embed=embed)
 
-            # summarize results
-            embed = discord.Embed(title="Level Rewards Claimed", color=0x2ecc71)
-            embed.description = f"Claimed rewards for {len(claimed_now)} level(s): {', '.join(str(l) for l in claimed_now)}."
-            embed.add_field(name="Note", value="Rewards include chests and sometimes Mora or badges. Check `!inventory` and your wallet for results.", inline=False)
-            await send_embed(ctx, embed)
-        except Exception as e:
-            print(f"Error in level claimall: {e}")
-            await ctx.send("Could not claim level rewards right now.")
-
-async def setup(bot):
-    # avoid adding the cog twice if the extension is reloaded or setup called multiple times
-    if bot.get_cog("Inventory") is None:
-        await bot.add_cog(Inventory(bot))
-    else:
-        print("Inventory cog already loaded; skipping add_cog")
+            else:
+                return await ctx.send(f"<a:X_:1437951830393884788> **{item['name']}** cannot be used.")

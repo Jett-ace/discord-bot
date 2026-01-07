@@ -1,7 +1,7 @@
 import random
 import discord
 from discord.ext import commands
-from utils.database import get_user_data, update_user_data
+from utils.database import get_user_data, update_user_data, track_game_stat, check_and_award_game_achievements, add_account_exp
 from utils.embed import send_embed
 
 
@@ -72,17 +72,48 @@ class BoxButton(discord.ui.Button):
                 title = "TicTacToe - Draw"
                 desc = "It's a draw!"
                 color = 0x95a5a6
+                
+                # Track play stats for both players on draw
+                try:
+                    await track_game_stat(view.player_x, "tictactoe_plays")
+                    await track_game_stat(view.player_o, "tictactoe_plays")
+                    if not view.vs_bot:
+                        await track_game_stat(view.player_x, "multiplayer_games")
+                        await track_game_stat(view.player_o, "multiplayer_games")
+                except Exception:
+                    pass
             else:
                 winner_id = view.player_x if winner == 'X' else view.player_o
+                loser_id = view.player_o if winner == 'X' else view.player_x
                 member = view.ctx.guild.get_member(winner_id) if view.ctx.guild else None
                 winner_name = member.display_name if member else 'Player'
                 # award Mora to the winner (if not the bot)
                 reward = random.randint(200, 600)
+                exp_reward = 0
+                leveled_up = False
+                new_level = 0
+                
                 if winner_id != view.cog.bot.user.id:
                     try:
                         data = await get_user_data(winner_id)
                         data['mora'] = data.get('mora', 0) + reward
                         await update_user_data(winner_id, mora=data['mora'])
+                        
+                        # Track stats
+                        await track_game_stat(winner_id, "tictactoe_wins")
+                        await track_game_stat(winner_id, "tictactoe_plays")
+                        await track_game_stat(loser_id, "tictactoe_plays")
+                        
+                        # Track multiplayer games if vs player
+                        if not view.vs_bot:
+                            await track_game_stat(winner_id, "multiplayer_games")
+                            await track_game_stat(loser_id, "multiplayer_games")
+                        
+                        await check_and_award_game_achievements(winner_id, view.cog.bot, view.ctx)
+                        
+                        # Award XP (100 XP for multiplayer win, 60 XP for bot win)
+                        exp_reward = 100 if not view.vs_bot else 60
+                        leveled_up, new_level, old_level = await add_account_exp(winner_id, exp_reward)
                     except Exception as e:
                         print(f"Error awarding tic tac toe reward: {e}")
 
@@ -92,8 +123,13 @@ class BoxButton(discord.ui.Button):
                     desc = "You lose. Better luck next time."
                     color = 0xDC143C  # Crimson red
                 else:
-                    title = f"TicTacToe - {winner_name} wins!"
-                    desc = f"{winner_name} wins! Awarded {reward:,} 💰."
+                    title = f"<a:Trophy:1438199339586424925> TicTacToe - {winner_name} wins!"
+                    desc = f"{winner_name} wins! Awarded {reward:,} <:mora:1437958309255577681>"
+                    if exp_reward > 0:
+                        desc += f" (+{exp_reward} XP)"
+                    if leveled_up:
+                        desc += f"\n<a:arrow:1437968863026479258> **Level Up!** You reached level {new_level}!"
+                    desc += "."
                     color = 0x2ecc71
             embed = discord.Embed(title=title, description=desc, color=color)
             embed.set_author(name=view.ctx.author.display_name, icon_url=view.ctx.author.display_avatar.url)
@@ -183,17 +219,48 @@ class TicTacToeView(discord.ui.View):
                 title = "TicTacToe - Draw"
                 desc = "It's a draw!"
                 color = 0x95a5a6
+                
+                # Track play stats for both players on draw
+                try:
+                    await track_game_stat(self.player_x, "tictactoe_plays")
+                    await track_game_stat(self.player_o, "tictactoe_plays")
+                    if not self.vs_bot:
+                        await track_game_stat(self.player_x, "multiplayer_games")
+                        await track_game_stat(self.player_o, "multiplayer_games")
+                except Exception:
+                    pass
             else:
                 winner_id = self.player_x if winner == 'X' else self.player_o
+                loser_id = self.player_o if winner == 'X' else self.player_x
                 member = self.ctx.guild.get_member(winner_id) if self.ctx.guild else None
                 winner_name = member.display_name if member else 'Player'
                 # award Mora to the winner (if not the bot)
                 reward = random.randint(200, 600)
+                exp_reward = 0
+                leveled_up = False
+                new_level = 0
+                
                 if winner_id != self.cog.bot.user.id:
                     try:
                         data = await get_user_data(winner_id)
                         data['mora'] = data.get('mora', 0) + reward
                         await update_user_data(winner_id, mora=data['mora'])
+                        
+                        # Track stats
+                        await track_game_stat(winner_id, "tictactoe_wins")
+                        await track_game_stat(winner_id, "tictactoe_plays")
+                        await track_game_stat(loser_id, "tictactoe_plays")
+                        
+                        # Track multiplayer games if vs player
+                        if not self.vs_bot:
+                            await track_game_stat(winner_id, "multiplayer_games")
+                            await track_game_stat(loser_id, "multiplayer_games")
+                        
+                        await check_and_award_game_achievements(winner_id, self.cog.bot, self.ctx)
+                        
+                        # Award XP (100 XP for multiplayer win, 60 XP for bot win)
+                        exp_reward = 100 if not self.vs_bot else 60
+                        leveled_up, new_level, old_level = await add_account_exp(winner_id, exp_reward)
                     except Exception as e:
                         print(f"Error awarding tic tac toe reward: {e}")
 
@@ -203,8 +270,13 @@ class TicTacToeView(discord.ui.View):
                     desc = "You lose. Better luck next time."
                     color = 0xDC143C  # Crimson red
                 else:
-                    title = f"TicTacToe - {winner_name} wins!"
-                    desc = f"{winner_name} wins! Awarded {reward:,} 💰."
+                    title = f"<a:Trophy:1438199339586424925> TicTacToe - {winner_name} wins!"
+                    desc = f"{winner_name} wins! Awarded {reward:,} <:mora:1437958309255577681>"
+                    if exp_reward > 0:
+                        desc += f" (+{exp_reward} XP)"
+                    if leveled_up:
+                        desc += f"\n<a:arrow:1437968863026479258> **Level Up!** You reached level {new_level}!"
+                    desc += "."
                     color = 0x2ecc71
             embed = discord.Embed(title=title, description=desc, color=color)
             embed.set_author(name=self.ctx.author.display_name, icon_url=self.ctx.author.display_avatar.url)
@@ -289,7 +361,7 @@ class TicTacToe(commands.Cog):
 
     @commands.command(name="tictactoe", aliases=["tt","ttt"])
     async def tictactoe(self, ctx, opponent: discord.Member = None):
-        """Start a 3x3 TicTacToe. Usage: !tictactoe [@opponent]
+        """Start a 3x3 TicTacToe. Usage: gtictactoe [@opponent]
         If no opponent is provided, you play vs the bot.
         Click the gray boxes to play.
         """
@@ -308,7 +380,7 @@ class TicTacToe(commands.Cog):
         # if playing vs bot, start immediately
         if player_o == self.bot.user.id:
             if game_key in self.active_games:
-                await ctx.send("A game between these players is already active in another channel.")
+                await ctx.send("⏳ A game between these players is already active in another channel.")
                 return
             self.active_games.add(game_key)
             vs_bot = True
@@ -321,7 +393,7 @@ class TicTacToe(commands.Cog):
 
         # PvP: send challenge and await accept/decline
         if game_key in self.active_games or game_key in self.pending_challenges:
-            await ctx.send("A game or challenge between these players is already active.")
+            await ctx.send("⏳ A game or challenge between these players is already active.")
             return
 
         # create a pending challenge and send accept/decline buttons
