@@ -1,90 +1,50 @@
 # Terms of Service
 
-**Last Updated: January 7, 2026**
+By using this bot, you agree to these terms.
 
-By using this Discord bot ("the Bot"), you agree to the following terms and conditions.
+## 1. Virtual Currency & Entertainment
 
-## 1. Acceptance of Terms
+- All currency (Mora) and items are **virtual and have zero real-world value**
+- Gambling features use only virtual currency for entertainment
+- Users of all ages may participate since no real money gambling occurs
+- Virtual currency cannot be exchanged for real money or anything outside the bot
 
-By inviting, using, or interacting with the Bot, you accept and agree to be bound by these Terms of Service. If you do not agree to these terms, you must immediately stop using the Bot.
+## 2. Real Money Purchases
 
-## 2. Description of Service
-
-The Bot provides entertainment features including:
-- Virtual economy and currency system (Mora)
-- Gambling and betting games
-- Inventory and item management
-- Leaderboards and achievements
-- Moderation tools
-
-**The Bot is for entertainment purposes only. All currency and items are virtual and have no real-world value.**
+- You can purchase with real money:
+  - Virtual currency (Mora)
+  - Virtual items
+  - Premium subscription (Patreon)
+- **All purchases are final and non-refundable**
+- Premium subscriptions are billed through Patreon and subject to their terms
+- Purchased currency/items are for entertainment only
+- We are not responsible for virtual currency or items lost through gambling or gameplay
+- No refunds for currency/items spent or lost in-game
+- Premium benefits may change or be revoked for violations
 
 ## 3. User Conduct
 
-You agree to:
-- Use the Bot in compliance with Discord's Terms of Service
-- Not exploit bugs or glitches for unfair advantage
-- Not use automated tools, bots, or scripts to interact with the Bot
-- Not harass other users or abuse Bot features
-- Not attempt to hack, reverse engineer, or disrupt the Bot's functionality
+- Follow Discord's Terms of Service
+- Don't exploit bugs or use cheats
+- Don't harass other users
+- Violations may result in ban or account reset
 
-## 4. Virtual Currency and Items
+## 4. Service Availability
 
-- All currency (Mora) and items are virtual with no real-world monetary value
-- Virtual currency cannot be exchanged for real money
-- The Bot operators reserve the right to adjust, remove, or modify virtual balances at any time
-- Virtual currency and items may be reset during updates or maintenance
+- The bot is provided "as is" without guarantees
+- Features may change, be removed, or stop working at any time
+- Your account data may be reset or deleted
 
-## 5. Gambling Features
+## 5. No Liability
 
-- Gambling features are for entertainment only
-- You must be 18+ to use gambling features (or the legal age in your jurisdiction)
-- The Bot uses random number generation for game outcomes
-- No real money is involved in any gambling activities
-- We are not responsible for any losses of virtual currency
+- We are not liable for any losses (virtual or real)
+- You use this bot at your own risk
+- Virtual items have no cash value
 
-## 6. Account and Data
+## 6. Changes
 
-- Your Discord User ID is used to track your virtual balance and progress
-- You are responsible for your account activity
-- Account data may be reset or deleted at any time
-- We reserve the right to ban users who violate these terms
-
-## 7. Modifications and Updates
-
-- We reserve the right to modify, suspend, or discontinue any feature at any time
-- These Terms may be updated without prior notice
-- Continued use of the Bot after changes constitutes acceptance of new terms
-
-## 8. Limitation of Liability
-
-- The Bot is provided "as is" without warranties of any kind
-- We are not liable for any damages, losses, or issues arising from Bot use
-- We do not guarantee uninterrupted or error-free service
-- Virtual currency loss is not refundable
-
-## 9. Premium Services
-
-- Premium features may be offered for real money payment
-- Premium subscriptions are non-refundable except where required by law
-- Premium benefits are subject to change
-- Premium access may be revoked for Terms violations
-
-## 10. Termination
-
-We reserve the right to:
-- Terminate or suspend access to the Bot at any time
-- Remove users who violate these Terms
-- Delete user data without prior notice
-
-## 11. Contact
-
-For questions about these Terms, contact the Bot owner through Discord or the official support server.
-
-## 12. Severability
-
-If any provision of these Terms is found to be invalid or unenforceable, the remaining provisions shall continue in full force and effect.
+These terms may be updated at any time. Continued use means you accept any changes.
 
 ---
 
-**By using this Bot, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.**
+**Questions?** Contact us on our support server.
