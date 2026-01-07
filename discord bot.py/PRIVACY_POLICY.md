@@ -1,10 +1,8 @@
-# Privacy Policy
-
-**Last Updated: January 7, 2026**
+Privacy Policy
 
 By using this bot, you agree to this privacy policy.
 
-## 1. What We Collect
+1. What We Collect
 
 We only collect what's necessary to make the bot work:
 - Your Discord User ID (to save your progress)
@@ -16,7 +14,7 @@ We only collect what's necessary to make the bot work:
 
 **We don't collect passwords, emails, or sensitive personal information.**
 
-## 2. How We Use Your Data
+2. How We Use Your Data
 
 Your data is used to:
 - Make the bot work (save balances, track progress, etc.)
@@ -25,14 +23,14 @@ Your data is used to:
 - Prevent cheating and abuse
 - Improve bot features
 
-## 3. Data Security
+3. Data Security
 
 - Your data is stored securely in encrypted databases
 - We use reasonable security measures to protect your information
 - Only authorized bot administrators can access the database
 - We don't store payment information (handled by Patreon/payment processors)
 
-## 4. Data Sharing
+4. Data Sharing
 
 **We never sell or trade your data.**
 
@@ -42,7 +40,7 @@ Your data may be visible in these cases:
 - Payment processors (Patreon) handle subscription data per their policies
 - We may disclose data if required by law
 
-## 5. Your Rights
+5. Your Rights
 
 You can:
 - Request a copy of your data
@@ -51,13 +49,13 @@ You can:
 
 Transaction logs may be kept for record purposes even after deletion requests.
 
-## 6. Data Retention
+6. Data Retention
 
 - We keep your data while you use the bot
 - Inactive accounts may be deleted after long periods
 - Transaction records are kept for audit purposes
 
-## 7. Changes to This Policy
+7. Changes to This Policy
 
 We may update this policy at any time. Continued use means you accept the changes.
 
