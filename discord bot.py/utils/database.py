@@ -1998,36 +1998,37 @@ async def consume_fishing_energy(user_id: int, amount: int):
     await ensure_user_db(user_id)
     from datetime import datetime
     
-    async with aiosqlite.connect(DB_PATH, timeout=10.0) as db:
-        await db.execute("BEGIN IMMEDIATE")
+    # Retry logic for database locks
+    for attempt in range(3):
         try:
-            cursor = await db.execute(
-                "SELECT fishing_energy FROM accounts WHERE user_id = ?",
-                (user_id,)
-            )
-            result = await cursor.fetchone()
-            
-            if not result:
-                await db.rollback()
-                return False
-            
-            current_energy = result[0] if result[0] is not None else 6
-            
-            if current_energy < amount:
-                await db.rollback()
-                return False
-            
-            new_energy = current_energy - amount
-            
-            await db.execute(
-                "UPDATE accounts SET fishing_energy = ?, last_energy_regen = ? WHERE user_id = ?",
-                (new_energy, datetime.utcnow().isoformat(), user_id)
-            )
-            await db.commit()
-            return True
-        except Exception:
-            await db.rollback()
-            raise
+            async with aiosqlite.connect(DB_PATH, timeout=15.0) as db:
+                cursor = await db.execute(
+                    "SELECT fishing_energy FROM accounts WHERE user_id = ?",
+                    (user_id,)
+                )
+                result = await cursor.fetchone()
+                
+                if not result:
+                    return False
+                
+                current_energy = result[0] if result[0] is not None else 6
+                
+                if current_energy < amount:
+                    return False
+                
+                new_energy = current_energy - amount
+                
+                await db.execute(
+                    "UPDATE accounts SET fishing_energy = ?, last_energy_regen = ? WHERE user_id = ?",
+                    (new_energy, datetime.utcnow().isoformat(), user_id)
+                )
+                await db.commit()
+                return True
+        except Exception as e:
+            if attempt < 2:  # Don't sleep on last attempt
+                await asyncio.sleep(0.5 * (attempt + 1))  # Exponential backoff
+            else:
+                return False  # Return False on final attempt
 
 
 async def add_fishing_energy(user_id: int, amount: int, is_premium: bool = False):
@@ -2042,23 +2043,27 @@ async def add_fishing_energy(user_id: int, amount: int, is_premium: bool = False
     
     max_energy = 9 if is_premium else 6
     
-    async with aiosqlite.connect(DB_PATH, timeout=10.0) as db:
-        await db.execute("BEGIN IMMEDIATE")
+    # Retry logic for database locks
+    for attempt in range(3):
         try:
-            cursor = await db.execute(
-                "SELECT fishing_energy FROM accounts WHERE user_id = ?",
-                (user_id,)
-            )
-            result = await cursor.fetchone()
-            
-            current_energy = result[0] if result and result[0] is not None else max_energy
-            new_energy = min(current_energy + amount, max_energy)
-            
-            await db.execute(
-                "UPDATE accounts SET fishing_energy = ? WHERE user_id = ?",
-                (new_energy, user_id)
-            )
-            await db.commit()
-        except Exception:
-            await db.rollback()
-            raise
+            async with aiosqlite.connect(DB_PATH, timeout=15.0) as db:
+                cursor = await db.execute(
+                    "SELECT fishing_energy FROM accounts WHERE user_id = ?",
+                    (user_id,)
+                )
+                result = await cursor.fetchone()
+                
+                current_energy = result[0] if result and result[0] is not None else max_energy
+                new_energy = min(current_energy + amount, max_energy)
+                
+                await db.execute(
+                    "UPDATE accounts SET fishing_energy = ? WHERE user_id = ?",
+                    (new_energy, user_id)
+                )
+                await db.commit()
+                return  # Success, exit
+        except Exception as e:
+            if attempt < 2:  # Don't sleep on last attempt
+                await asyncio.sleep(0.5 * (attempt + 1))  # Exponential backoff
+            else:
+                raise  # Re-raise on final attempt
