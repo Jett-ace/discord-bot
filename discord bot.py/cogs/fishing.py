@@ -713,6 +713,51 @@ class Fishing(commands.Cog):
                 await db.commit()
             rewards.append("⚙️ **Gold Scrap**")
         
+        # Useful consumable items (rare drops)
+        # Lucky Dice (3% chance)
+        if random.random() < 0.03:
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("""
+                    INSERT INTO inventory (user_id, item_id, quantity)
+                    VALUES (?, 'lucky_dice', 1)
+                    ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + 1
+                """, (ctx.author.id,))
+                await db.commit()
+            rewards.append("<:dice:1457965149137670186> **Lucky Dice**")
+        
+        # XP Booster (4% chance)
+        if random.random() < 0.04:
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("""
+                    INSERT INTO inventory (user_id, item_id, quantity)
+                    VALUES (?, 'xp_booster', 1)
+                    ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + 1
+                """, (ctx.author.id,))
+                await db.commit()
+            rewards.append("<:exp:1437553839359397928> **XP Booster**")
+        
+        # Lucky Clover (2% chance)
+        if random.random() < 0.02:
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("""
+                    INSERT INTO inventory (user_id, item_id, quantity)
+                    VALUES (?, 'lucky_clover', 1)
+                    ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + 1
+                """, (ctx.author.id,))
+                await db.commit()
+            rewards.append("<a:lucky_clover:1459167567154512065> **Lucky Clover**")
+        
+        # Golden Chip (1.5% chance, rare but useful)
+        if random.random() < 0.015:
+            async with aiosqlite.connect(DB_PATH) as db:
+                await db.execute("""
+                    INSERT INTO inventory (user_id, item_id, quantity)
+                    VALUES (?, 'golden_chip', 1)
+                    ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + 1
+                """, (ctx.author.id,))
+                await db.commit()
+            rewards.append("<:goldenchip:1457964285207646264> **Golden Chip**")
+        
         # Award XP
         xp_reward = (area_data["level_required"] + 1) * 50
         await add_account_exp(ctx.author.id, xp_reward)
