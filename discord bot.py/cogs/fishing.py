@@ -639,6 +639,12 @@ class Fishing(commands.Cog):
             
             rewards.append(f"{bait_emoji} {bait_name}")
         
+        # Mora reward (10k - 50k)
+        mora_reward = random.randint(10000, 50000)
+        from utils.database import add_mora
+        await add_mora(ctx.author.id, mora_reward)
+        rewards.append(f"<:Mora:1437473042921783326> **{mora_reward:,} Mora**")
+        
         # Chance for chest (15% base, increased by rod reward bonus, +5% if scorpion)
         chest_chance = 0.15 * (1 + rod_data['reward_bonus'])
         if used_bait == "Scorpion":
@@ -673,9 +679,9 @@ class Fishing(commands.Cog):
             
             rewards.append(f"{chest_emojis.get(chest_type, '')} {chest_type.capitalize()} Chest")
         
-        # Chance for fishing materials (scraps and templates)
-        # TideShells (8% chance, common material needed for upgrades)
-        if random.random() < 0.08:
+        # Chance for fishing materials (scraps and shells)
+        # TideShells (12% chance, increased from 8%)
+        if random.random() < 0.12:
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute("""
                     INSERT INTO inventory (user_id, item_id, quantity)
@@ -685,19 +691,8 @@ class Fishing(commands.Cog):
                 await db.commit()
             rewards.append("<:TideShells:1459005927389663445> **TideShells**")
         
-        # Fishing template (5% base chance, Epic rarity)
-        if random.random() < 0.05:
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute("""
-                    INSERT INTO inventory (user_id, item_id, quantity)
-                    VALUES (?, 'fishing_template', 1)
-                    ON CONFLICT(user_id, item_id) DO UPDATE SET quantity = quantity + 1
-                """, (ctx.author.id,))
-                await db.commit()
-            rewards.append("🎣 **Fishing Template**")
-        
-        # Silver scrap (5% chance, available from Silverfin+ areas)
-        if area_data['level_required'] >= 10 and random.random() < 0.05:
+        # Silver scrap (8% chance, increased from 5%, available from Silverfin+ areas)
+        if area_data['level_required'] >= 10 and random.random() < 0.08:
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute("""
                     INSERT INTO inventory (user_id, item_id, quantity)
@@ -707,8 +702,8 @@ class Fishing(commands.Cog):
                 await db.commit()
             rewards.append("<:silverscrap:1459002718810279957> **Silver Scrap**")
         
-        # Gold scrap (2% chance, available from Azure+ areas)
-        if area_data['level_required'] >= 25 and random.random() < 0.02:
+        # Gold scrap (4% chance, increased from 2%, available from Azure+ areas)
+        if area_data['level_required'] >= 25 and random.random() < 0.04:
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute("""
                     INSERT INTO inventory (user_id, item_id, quantity)
