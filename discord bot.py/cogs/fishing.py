@@ -2022,8 +2022,11 @@ class Fishing(commands.Cog):
         if amount < 1 or amount > 50:
             return await ctx.send("<a:X_:1437951830393884788> Amount must be between 1 and 50!")
         
+        # Ensure user exists in database
+        from utils.database import ensure_user_db, add_fishing_energy
+        await ensure_user_db(user.id)
+        
         # Get current energy and max
-        from utils.database import add_fishing_energy
         is_premium = await self.is_premium_user(user.id)
         max_energy = 9 if is_premium else 6
         
