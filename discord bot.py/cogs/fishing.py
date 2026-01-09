@@ -641,8 +641,9 @@ class Fishing(commands.Cog):
         
         # Mora reward (10k - 50k)
         mora_reward = random.randint(10000, 50000)
-        from utils.database import add_mora
-        await add_mora(ctx.author.id, mora_reward)
+        from utils.database import get_user_data, update_user_data
+        user_data = await get_user_data(ctx.author.id)
+        await update_user_data(ctx.author.id, mora=user_data["mora"] + mora_reward)
         rewards.append(f"<:Mora:1437473042921783326> **{mora_reward:,} Mora**")
         
         # Chance for chest (15% base, increased by rod reward bonus, +5% if scorpion)
