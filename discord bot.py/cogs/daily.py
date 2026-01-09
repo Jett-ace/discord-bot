@@ -250,10 +250,6 @@ class Daily(commands.Cog):
                     (ctx.author.id, now.isoformat(), display_streak),
                 )
                 
-                # Grant +2 fishing energy
-                from utils.database import add_fishing_energy
-                await add_fishing_energy(ctx.author.id, 2, is_premium)
-                
                 # Give 0-2 regular chests with streak-based odds
                 # Base: 50% for first chest, 30% for second chest
                 # Each streak day adds +2% to both chances (max +40% at 20 streak)
@@ -276,6 +272,10 @@ class Daily(commands.Cog):
                     """, (ctx.author.id, chest_count, chest_count))
 
                 await db.commit()
+            
+            # Grant +2 fishing energy (outside db context to avoid lock)
+            from utils.database import add_fishing_energy
+            await add_fishing_energy(ctx.author.id, 2, is_premium)
 
             achievements_earned = []
             if display_streak == 10:
@@ -494,10 +494,6 @@ class Daily(commands.Cog):
                     (ctx.author.id, now.isoformat(), display_streak),
                 )
                 
-                # Grant +1 fishing energy
-                from utils.database import add_fishing_energy
-                await add_fishing_energy(ctx.author.id, 1, True)  # is_premium = True
-                
                 # Give random item (weighted)
                 random_items = [
                     "lucky_dice", "streak", "shield", "lockpick",
@@ -526,6 +522,10 @@ class Daily(commands.Cog):
                     """, (ctx.author.id, chest_type))
 
                 await db.commit()
+            
+            # Grant +1 fishing energy (outside db context to avoid lock)
+            from utils.database import add_fishing_energy
+            await add_fishing_energy(ctx.author.id, 1, True)  # is_premium = True
 
             # Build header text
             header_text = f"**Streak:** {display_streak} - Next claim in 12 hours\n\n**Rewards:**"
