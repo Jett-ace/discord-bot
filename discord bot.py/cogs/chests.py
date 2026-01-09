@@ -31,41 +31,39 @@ CHEST_TYPES = {
             "mora": (50000, 150000),
             "xp": (500, 1500),
             "items": {
-                # Bait items
-                "wormbait": 0.25,         # 25% - Very common
-                "scorpion": 0.18,         # 18% - Common
+                # Bait items - give 3-7 instead of 1
+                "wormbait": 0.08,         # 8% - Common (but gives 3-7)
+                "scorpion": 0.06,         # 6% - Common (but gives 3-7)
                 
                 # Common items (higher odds)
-                "xp_booster": 0.012,      # 1.2% - Common
-                "fence": 0.010,           # 1.0% - Common
-                "lock": 0.009,            # 0.9% - Common
+                "xp_booster": 0.15,       # 15% - Common
+                "fence": 0.12,            # 12% - Common
+                "lock": 0.10,             # 10% - Common
+                "lucky_dice": 0.09,       # 9% - Common
                 
                 # Uncommon items
-                "lucky_dice": 0.008,      # 0.8% - Uncommon
-                "shotgun": 0.007,         # 0.7% - Uncommon
-                "guarddog": 0.006,        # 0.6% - Uncommon
+                "shotgun": 0.08,          # 8% - Uncommon
+                "guarddog": 0.07,         # 7% - Uncommon
+                "golden_chip": 0.06,      # 6% - Uncommon
+                "thiefpack": 0.05,        # 5% - Uncommon
                 
                 # Rare items
-                "golden_chip": 0.005,     # 0.5% - Rare
-                "thiefpack": 0.004,       # 0.4% - Rare
+                "double_down": 0.04,      # 4% - Rare
+                "bankers_key": 0.035,     # 3.5% - Rare
+                "streak_shield": 0.03,    # 3% - Rare
+                "ninjapack": 0.025,       # 2.5% - Rare
                 
                 # Epic items
-                "double_down": 0.004,     # 0.4% - Epic
-                "bankers_key": 0.003,     # 0.3% - Epic
-                "streak_shield": 0.0025,  # 0.25% - Epic
-                "ninjapack": 0.002,       # 0.2% - Epic
+                "hot_streak": 0.02,       # 2% - Epic
+                "card_counter": 0.015,    # 1.5% - Epic
+                "piggy_bank": 0.012,      # 1.2% - Epic
+                "rigged_deck": 0.01,      # 1% - Epic
+                "bank_upgrade": 0.008,    # 0.8% - Epic
                 
-                # Legendary items
-                "hot_streak": 0.0015,     # 0.15% - Legendary
-                "card_counter": 0.0012,   # 0.12% - Legendary
-                "piggy_bank": 0.001,      # 0.1% - Legendary
-                "rigged_deck": 0.0008,    # 0.08% - Legendary
-                "bank_upgrade": 0.0006,   # 0.06% - Legendary
-                
-                # Mythic items (ULTRA RARE)
-                "lucky_horseshoe": 0.0005, # 0.05% - Mythic
-                "plasma_canon": 0.0003,   # 0.03% - Mythic
-                "special_crate": 0.00005,  # 0.005% - Mythic (1 in 20,000)
+                # Legendary items (ULTRA RARE)
+                "lucky_horseshoe": 0.005, # 0.5% - Legendary
+                "plasma_canon": 0.003,    # 0.3% - Legendary
+                "special_crate": 0.001,   # 0.1% - Legendary
             }
         }
     }
@@ -197,6 +195,7 @@ class Chests(commands.Cog):
         total_mora = 0
         total_xp = 0
         all_items_won = []
+        item_quantities = {}  # Track quantities for display (especially for multi-bait)
         
         # Open each chest
         for _ in range(amount):
@@ -260,6 +259,16 @@ class Chests(commands.Cog):
         if all_items_won:
             async with aiosqlite.connect(DB_PATH) as db:
                 for item_id in all_items_won:
+                    # For bait items from diamond chests, give 3-7 instead of 1
+                    quantity_to_add = 1
+                    if chest_type == "diamond" and item_id in ["wormbait", "scorpion"]:
+                        quantity_to_add = random.randint(3, 7)
+                    
+                    # Track total quantities for display
+                    if item_id not in item_quantities:
+                        item_quantities[item_id] = 0
+                    item_quantities[item_id] += quantity_to_add
+                    
                     # Check if item exists in inventory
                     async with db.execute(
                         "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = ?",
@@ -269,13 +278,13 @@ class Chests(commands.Cog):
                     
                     if result:
                         await db.execute(
-                            "UPDATE inventory SET quantity = quantity + 1 WHERE user_id = ? AND item_id = ?",
-                            (ctx.author.id, item_id)
+                            "UPDATE inventory SET quantity = quantity + ? WHERE user_id = ? AND item_id = ?",
+                            (quantity_to_add, ctx.author.id, item_id)
                         )
                     else:
                         await db.execute(
-                            "INSERT INTO inventory (user_id, item_id, quantity) VALUES (?, ?, 1)",
-                            (ctx.author.id, item_id)
+                            "INSERT INTO inventory (user_id, item_id, quantity) VALUES (?, ?, ?)",
+                            (ctx.author.id, item_id, quantity_to_add)
                         )
                 await db.commit()
 
@@ -310,15 +319,15 @@ class Chests(commands.Cog):
         )
 
         if all_items_won:
-            # Count duplicates and separate chests from other items
-            from collections import Counter
-            item_counts = Counter(all_items_won)
+            # Use the tracked quantities instead of just counting list items
+            # This way bait shows the actual 3-7 quantity given
             
             # Separate chests and other items
             chest_items = []
             other_items = []
             
-            for item_id, count in item_counts.items():
+            for item_id in sorted(item_quantities.keys()):
+                count = item_quantities[item_id]
                 item_line = f"{ITEM_EMOJIS[item_id]} **{ITEM_NAMES[item_id]}** x{count}" if count > 1 else f"{ITEM_EMOJIS[item_id]} **{ITEM_NAMES[item_id]}**"
                 if "chest" in item_id or item_id == "special_crate":
                     chest_items.append(item_line)
