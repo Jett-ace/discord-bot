@@ -644,7 +644,7 @@ class Fishing(commands.Cog):
         from utils.database import get_user_data, update_user_data
         user_data = await get_user_data(ctx.author.id)
         await update_user_data(ctx.author.id, mora=user_data["mora"] + mora_reward)
-        rewards.append(f"<:Mora:1437473042921783326> **{mora_reward:,} Mora**")
+        rewards.append(f"<:mora:1437958309255577681> **{mora_reward:,} Mora**")
         
         # Chance for chest (15% base, increased by rod reward bonus, +5% if scorpion)
         chest_chance = 0.15 * (1 + rod_data['reward_bonus'])
@@ -2007,6 +2007,35 @@ class Fishing(commands.Cog):
         )
         
         embed.set_footer(text="Fish upgrade system coming soon!")
+        await send_embed(ctx, embed)
+    
+    @commands.command(name="grantenergy")
+    async def grant_energy(self, ctx, user: discord.Member, amount: int):
+        """Grant fishing energy to a user (Owner Only)
+        
+        Usage: ggrantenergy @user <amount>
+        """
+        from config import OWNER_ID
+        if ctx.author.id != OWNER_ID:
+            return
+        
+        if amount < 1 or amount > 50:
+            return await ctx.send("<a:X_:1437951830393884788> Amount must be between 1 and 50!")
+        
+        # Get current energy and max
+        from utils.database import add_fishing_energy
+        is_premium = await self.is_premium_user(user.id)
+        max_energy = 9 if is_premium else 6
+        
+        # Add energy (will cap at max)
+        await add_fishing_energy(user.id, amount, is_premium)
+        
+        embed = discord.Embed(
+            title="<:energy:1459189042574004224> Energy Granted",
+            description=f"Granted **{amount}** <:energy:1459189042574004224> energy to {user.mention}",
+            color=0x2ECC71
+        )
+        embed.add_field(name="Max Capacity", value=f"{max_energy} energy", inline=False)
         await send_embed(ctx, embed)
 
 async def setup(bot):
