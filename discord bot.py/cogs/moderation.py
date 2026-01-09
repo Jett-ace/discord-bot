@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+import io
 
 import discord
 from discord.ext import commands
@@ -13,6 +14,7 @@ from utils.database import (
     reset_wishes,
     update_user_data,
 )
+from utils.embed import send_embed
 from utils.logger import setup_logger
 
 logger = setup_logger("Moderation")
@@ -500,6 +502,190 @@ class Moderation(commands.Cog):
             return
 
         await ctx.send(f"❌ Unknown item: {item}. Use `gitem` to see all available items or check item names/aliases.")
+    
+    @commands.command(name="grantrod", aliases=["giverod", "setrod"])
+    async def grant_rod(self, ctx, tier: int = None, member: discord.Member = None):
+        """Grant a fishing rod to a user. Usage: ggrantrod <1/2/3> [@user]
+        Tiers: 1=Wooden, 2=Silver, 3=Golden
+        Only the OWNER can use this command.
+        """
+        from config import OWNER_ID
+        
+        if ctx.author.id != OWNER_ID:
+            return
+        
+        if tier is None or tier not in [1, 2, 3]:
+            return await ctx.send("<a:X_:1437951830393884788> Usage: `ggrantrod <tier> [@user]`\nTiers: 1=Wooden, 2=Silver, 3=Golden\nExample: `ggrantrod 3` (grants yourself golden rod)")
+        
+        # Default to self
+        target_member = member if member else ctx.author
+        
+        # Get fishing cog to use rod data
+        fishing_cog = self.bot.get_cog('Fishing')
+        if not fishing_cog:
+            return await ctx.send("<a:X_:1437951830393884788> Fishing system not loaded!")
+        
+        # Import rod data
+        from cogs.fishing import FISHING_RODS
+        rod_data = FISHING_RODS[tier]
+        
+        # Set rod tier and full durability
+        await fishing_cog.set_fishing_rod(target_member.id, tier, rod_data['max_durability'])
+        
+        await ctx.send(f"<a:Y_:1437951897989730305> Gave {rod_data['emoji']} **{rod_data['name']}** ({rod_data['max_durability']}/{rod_data['max_durability']} durability) to {target_member.display_name}.")
+    
+    @commands.command(name="fixdb", aliases=["migratedb", "updatedb"])
+    async def fix_database(self, ctx):
+        """Manually add ALL missing tables and columns to database (owner only)"""
+        from config import OWNER_ID
+        
+        if ctx.author.id != OWNER_ID:
+            return
+        
+        try:
+            async with aiosqlite.connect(DB_PATH) as db:
+                added = []
+                
+                # === Check accounts table columns ===
+                cursor = await db.execute("PRAGMA table_info('accounts')")
+                cols = await cursor.fetchall()
+                col_names = [c[1] for c in cols]
+                
+                if 'rod_tier' not in col_names:
+                    await db.execute("ALTER TABLE accounts ADD COLUMN rod_tier INTEGER DEFAULT 0")
+                    added.append("accounts.rod_tier")
+                
+                if 'rod_durability' not in col_names:
+                    await db.execute("ALTER TABLE accounts ADD COLUMN rod_durability INTEGER DEFAULT 0")
+                    added.append("accounts.rod_durability")
+                
+                if 'fishing_energy' not in col_names:
+                    await db.execute("ALTER TABLE accounts ADD COLUMN fishing_energy INTEGER DEFAULT 6")
+                    added.append("accounts.fishing_energy")
+                
+                if 'last_energy_regen' not in col_names:
+                    await db.execute("ALTER TABLE accounts ADD COLUMN last_energy_regen TEXT")
+                    added.append("accounts.last_energy_regen")
+                
+                # === Check for maintenance_whitelist table ===
+                cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='maintenance_whitelist'")
+                if not await cursor.fetchone():
+                    await db.execute("""
+                        CREATE TABLE maintenance_whitelist (
+                            user_id INTEGER PRIMARY KEY,
+                            added_at TIMESTAMP,
+                            added_by INTEGER
+                        )
+                    """)
+                    added.append("maintenance_whitelist table")
+                
+                # === Check for fishing tables ===
+                cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='caught_fish'")
+                if not await cursor.fetchone():
+                    await db.execute("""
+                        CREATE TABLE caught_fish (
+                            user_id INTEGER,
+                            fish_id TEXT,
+                            quantity INTEGER DEFAULT 0,
+                            fish_level INTEGER DEFAULT 1,
+                            fish_exp INTEGER DEFAULT 0,
+                            PRIMARY KEY (user_id, fish_id)
+                        )
+                    """)
+                    added.append("caught_fish table")
+                else:
+                    # Check if fish_level and fish_exp columns exist
+                    cursor = await db.execute("PRAGMA table_info('caught_fish')")
+                    cols = await cursor.fetchall()
+                    col_names = [c[1] for c in cols]
+                    
+                    if 'fish_level' not in col_names:
+                        await db.execute("ALTER TABLE caught_fish ADD COLUMN fish_level INTEGER DEFAULT 1")
+                        added.append("caught_fish.fish_level")
+                    
+                    if 'fish_exp' not in col_names:
+                        await db.execute("ALTER TABLE caught_fish ADD COLUMN fish_exp INTEGER DEFAULT 0")
+                        added.append("caught_fish.fish_exp")
+                
+                cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='fishing_stats'")
+                if not await cursor.fetchone():
+                    await db.execute("""
+                        CREATE TABLE fishing_stats (
+                            user_id INTEGER PRIMARY KEY,
+                            total_catches INTEGER DEFAULT 0,
+                            total_value INTEGER DEFAULT 0
+                        )
+                    """)
+                    added.append("fishing_stats table")
+                
+                cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='equipped_fish'")
+                if not await cursor.fetchone():
+                    await db.execute("""
+                        CREATE TABLE equipped_fish (
+                            user_id INTEGER,
+                            slot INTEGER,
+                            fish_id TEXT,
+                            equipped_at TEXT,
+                            PRIMARY KEY (user_id, slot)
+                        )
+                    """)
+                    added.append("equipped_fish table")
+                
+                # === Check for rob_items table and columns ===
+                cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='rob_items'")
+                if not await cursor.fetchone():
+                    await db.execute("""
+                        CREATE TABLE rob_items (
+                            user_id INTEGER PRIMARY KEY,
+                            shotgun INTEGER DEFAULT 0,
+                            mask INTEGER DEFAULT 0,
+                            night_vision INTEGER DEFAULT 0,
+                            lockpicker INTEGER DEFAULT 0,
+                            guard_dog INTEGER DEFAULT 0,
+                            guard_dog_expires TEXT,
+                            spiky_fence INTEGER DEFAULT 0,
+                            lock INTEGER DEFAULT 0,
+                            ninjapack INTEGER DEFAULT 0
+                        )
+                    """)
+                    added.append("rob_items table")
+                else:
+                    # Check if ninjapack column exists
+                    cursor = await db.execute("PRAGMA table_info('rob_items')")
+                    rob_cols = await cursor.fetchall()
+                    rob_col_names = [c[1] for c in rob_cols]
+                    if 'ninjapack' not in rob_col_names:
+                        await db.execute("ALTER TABLE rob_items ADD COLUMN ninjapack INTEGER DEFAULT 0")
+                        added.append("rob_items.ninjapack")
+                
+                # === Check for rob_cooldowns table ===
+                cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='rob_cooldowns'")
+                if not await cursor.fetchone():
+                    await db.execute("""
+                        CREATE TABLE rob_cooldowns (
+                            user_id INTEGER PRIMARY KEY,
+                            last_rob TEXT,
+                            was_successful INTEGER DEFAULT 0
+                        )
+                    """)
+                    added.append("rob_cooldowns table")
+                else:
+                    # Check if was_successful column exists
+                    cursor = await db.execute("PRAGMA table_info('rob_cooldowns')")
+                    cooldown_cols = await cursor.fetchall()
+                    cooldown_col_names = [c[1] for c in cooldown_cols]
+                    if 'was_successful' not in cooldown_col_names:
+                        await db.execute("ALTER TABLE rob_cooldowns ADD COLUMN was_successful INTEGER DEFAULT 0")
+                        added.append("rob_cooldowns.was_successful")
+                
+                await db.commit()
+                
+                if added:
+                    await ctx.send(f"<a:Y_:1437951897989730305> **Database Updated!**\\nAdded: {', '.join(added)}")
+                else:
+                    await ctx.send("✅ Database is up to date! All tables and columns exist.")
+        except Exception as e:
+            await ctx.send(f"<a:X_:1437951830393884788> Error: {str(e)}")
 
     @commands.command(name="remove", aliases=["take"])
     async def remove(self, ctx, member: discord.Member, amount: int):
@@ -801,6 +987,92 @@ class Moderation(commands.Cog):
             )
         
         await ctx.send(embed=embed)
+    
+    @commands.command(name="madd", aliases=["maintenanceadd", "mwhitelist"])
+    async def maintenance_add(self, ctx, member: discord.Member = None):
+        """Add a user to maintenance mode whitelist (allows them to use bot during maintenance)"""
+        if ctx.author.id != OWNER_ID:
+            return
+        
+        if member is None:
+            return await ctx.send("<a:X_:1437951830393884788> Usage: `gmadd @user`\nExample: `gmadd @JohnDoe`")
+        
+        from datetime import datetime
+        
+        # Add to whitelist
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT OR REPLACE INTO maintenance_whitelist (user_id, added_at, added_by) VALUES (?, ?, ?)",
+                (member.id, datetime.now().isoformat(), ctx.author.id)
+            )
+            await db.commit()
+        
+        embed = discord.Embed(
+            title="✅ User Whitelisted",
+            description=f"{member.mention} can now use the bot during maintenance mode.",
+            color=0x2ECC71
+        )
+        embed.set_footer(text="Use gmremove to remove from whitelist")
+        await send_embed(ctx, embed)
+    
+    @commands.command(name="mremove", aliases=["maintenanceremove", "munwhitelist"])
+    async def maintenance_remove(self, ctx, member: discord.Member = None):
+        """Remove a user from maintenance mode whitelist"""
+        if ctx.author.id != OWNER_ID:
+            return
+        
+        if member is None:
+            return await ctx.send("<a:X_:1437951830393884788> Usage: `gmremove @user`\nExample: `gmremove @JohnDoe`")
+        
+        # Remove from whitelist
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute(
+                "DELETE FROM maintenance_whitelist WHERE user_id = ?",
+                (member.id,)
+            )
+            await db.commit()
+            rows_affected = cursor.rowcount
+        
+        if rows_affected == 0:
+            return await ctx.send(f"<a:X_:1437951830393884788> {member.mention} is not in the whitelist.")
+        
+        embed = discord.Embed(
+            title="❌ User Removed from Whitelist",
+            description=f"{member.mention} can no longer use the bot during maintenance mode.",
+            color=0xE74C3C
+        )
+        await send_embed(ctx, embed)
+    
+    @commands.command(name="mlist", aliases=["maintenancelist", "mwhitelistlist"])
+    async def maintenance_list(self, ctx):
+        """List all users whitelisted for maintenance mode"""
+        if ctx.author.id != OWNER_ID:
+            return
+        
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("SELECT user_id, added_at FROM maintenance_whitelist ORDER BY added_at DESC")
+            whitelist = await cursor.fetchall()
+        
+        if not whitelist:
+            return await ctx.send("📋 No users are currently whitelisted for maintenance mode.")
+        
+        embed = discord.Embed(
+            title="🔧 Maintenance Whitelist",
+            description=f"**{len(whitelist)}** user(s) can use the bot during maintenance:",
+            color=0x3498DB
+        )
+        
+        user_list = []
+        for user_id, added_at in whitelist:
+            try:
+                user = await self.bot.fetch_user(user_id)
+                user_list.append(f"• {user.mention} (`{user.id}`)")
+            except:
+                user_list.append(f"• Unknown User (`{user_id}`)")
+        
+        embed.add_field(name="Whitelisted Users", value="\n".join(user_list), inline=False)
+        embed.set_footer(text="Use gmadd/gmremove to manage whitelist")
+        await send_embed(ctx, embed)
 
     @commands.command(name="setprefix", aliases=["prefix"])
     async def setprefix(self, ctx, new_prefix: str = None):
@@ -992,7 +1264,7 @@ class Moderation(commands.Cog):
                     name=final_name,
                     description=sticker_desc,
                     emoji="👍",
-                    file=discord.File(fp=sticker_bytes, filename=f"{final_name}.png"),
+                    file=discord.File(fp=io.BytesIO(sticker_bytes), filename=f"{final_name}.png"),
                     reason=f"Stolen by {ctx.author}"
                 )
 
@@ -1410,39 +1682,56 @@ class Moderation(commands.Cog):
         except Exception:
             cooldown_info.append("<a:arrow:1437968863026479258> **Next Bundle:** Ready")
 
-        # Check fishing cooldown
+        # Show next energy regen time
         try:
-            fishing_cog = self.bot.get_cog("Fishing")
-            if fishing_cog and hasattr(fishing_cog, "_fish_cooldowns"):
-                if ctx.author.id in fishing_cog._fish_cooldowns:
-                    last_fish_data = fishing_cog._fish_cooldowns[ctx.author.id]
-                    last_fish_time = last_fish_data["last_fish"]
-                    last_cooldown = last_fish_data["cooldown_seconds"]
-
-                    time_since = (dt.utcnow() - last_fish_time).total_seconds()
-
-                    if time_since >= last_cooldown:
+            from utils.database import get_fishing_energy
+            from datetime import datetime, timedelta
+            
+            # Check if premium for energy display
+            premium_cog = self.bot.get_cog('Premium')
+            is_premium = False
+            if premium_cog:
+                is_premium = await premium_cog.is_premium(ctx.author.id)
+            
+            current_energy = await get_fishing_energy(ctx.author.id, is_premium)
+            max_energy = 9 if is_premium else 6
+            regen_minutes = 30 if is_premium else 60
+            
+            # Get last regen time to calculate next regen
+            async with aiosqlite.connect(DB_PATH) as db:
+                cursor = await db.execute(
+                    "SELECT last_energy_regen FROM accounts WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
+                result = await cursor.fetchone()
+                
+                if result and result[0] and current_energy < max_energy:
+                    last_regen = datetime.fromisoformat(result[0])
+                    next_regen = last_regen + timedelta(minutes=regen_minutes)
+                    now = datetime.utcnow()
+                    
+                    if now >= next_regen:
                         cooldown_info.append(
-                            "<a:arrow:1437968863026479258> **Next Fishing:** Ready"
+                            f"<a:arrow:1437968863026479258> **Next Energy:** Ready ({current_energy}/{max_energy} <:energy:1459189042574004224>)"
                         )
                     else:
-                        time_left = last_cooldown - time_since
-                        minutes = int(time_left // 60)
-                        seconds = int(time_left % 60)
+                        time_left = next_regen - now
+                        minutes = int(time_left.total_seconds() // 60)
+                        seconds = int(time_left.total_seconds() % 60)
                         cooldown_info.append(
-                            f"<a:arrow:1437968863026479258> **Next Fishing:** {minutes}m {seconds}s"
+                            f"<a:arrow:1437968863026479258> **Next Energy:** {minutes}m {seconds}s ({current_energy}/{max_energy} <:energy:1459189042574004224>)"
                         )
+                elif current_energy >= max_energy:
+                    cooldown_info.append(
+                        f"<a:arrow:1437968863026479258> **Next Energy:** Full ({current_energy}/{max_energy} <:energy:1459189042574004224>)"
+                    )
                 else:
                     cooldown_info.append(
-                        "<a:arrow:1437968863026479258> **Next Fishing:** Ready"
+                        f"<a:arrow:1437968863026479258> **Next Energy:** Ready ({current_energy}/{max_energy} <:energy:1459189042574004224>)"
                     )
-            else:
-                cooldown_info.append(
-                    "<a:arrow:1437968863026479258> **Next Fishing:** Ready"
-                )
         except Exception:
             cooldown_info.append(
-                "<a:arrow:1437968863026479258> **Next Fishing:** Ready"
+                "<a:arrow:1437968863026479258> **Next Energy:** Ready"
             )
 
         # Check RPS cooldown

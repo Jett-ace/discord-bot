@@ -16,7 +16,7 @@ token = os.getenv('DISCORD_TOKEN')
 
 # Global cooldown tracker
 user_cooldowns = {}
-GLOBAL_COOLDOWN = 6.0  # 6 seconds between ANY commands
+GLOBAL_COOLDOWN = 3.0  # 3 seconds between ANY commands
 
 # Dynamic prefix function
 def get_prefix(bot, message):
@@ -79,7 +79,11 @@ async def downloaddb(ctx):
     if ctx.author.id != 873464016217968640:
         return
     try:
-        await ctx.send("Uploading casino.db...", file=discord.File('casino.db'))
+        import os
+        size = os.path.getsize('casino.db') / (1024 * 1024)  # Size in MB
+        await ctx.send(f"Database size: {size:.2f} MB. Uploading...", file=discord.File('casino.db'))
+    except discord.HTTPException:
+        await ctx.send("File too large for Discord (>25MB). Use SFTP or file manager instead.")
     except Exception as e:
         await ctx.send(f"Error: {e}")
 
@@ -218,11 +222,25 @@ async def on_message(message):
     
     # Check maintenance mode BEFORE processing commands
     from config import MAINTENANCE_MODE, OWNER_ID
-    if MAINTENANCE_MODE and message.author.id != OWNER_ID:
-        # Only respond if it's a valid command attempt
-        if ctx.valid and ctx.command:
-            await message.channel.send("🔧 Bot currently under maintenance. Please try again later.")
-        return
+    if MAINTENANCE_MODE:
+        # Allow owner to always use bot
+        if message.author.id == OWNER_ID:
+            pass  # Owner always has access
+        else:
+            # Check if user is whitelisted for maintenance mode
+            is_whitelisted = False
+            async with aiosqlite.connect(config.DB_PATH) as db:
+                cursor = await db.execute(
+                    "SELECT 1 FROM maintenance_whitelist WHERE user_id = ?",
+                    (message.author.id,)
+                )
+                is_whitelisted = await cursor.fetchone() is not None
+            
+            if not is_whitelisted:
+                # Only respond if it's a valid command attempt
+                if ctx.valid and ctx.command:
+                    await message.channel.send("Bot currently under maintenance. Please try again later.")
+                return
     
     # If there's a valid command
     if ctx.command:

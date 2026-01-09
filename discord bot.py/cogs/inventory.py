@@ -111,7 +111,7 @@ class Inventory(commands.Cog):
 
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
-                "SELECT item_id, quantity, activated_at FROM inventory WHERE user_id = ? ORDER BY quantity DESC",
+                "SELECT item_id, quantity, activated_at FROM inventory WHERE user_id = ?",
                 (ctx.author.id,)
             ) as cursor:
                 items = await cursor.fetchall()
@@ -123,6 +123,34 @@ class Inventory(commands.Cog):
                 color=0x95A5A6
             )
             return await ctx.send(embed=embed)
+
+        # Categorize items
+        categories = {
+            "Chests": [],
+            "Consumables": [],
+            "Permanent": [],
+            "Rob Items": [],
+            "Other": []
+        }
+        
+        for item_id, quantity, activated_at in items:
+            if item_id not in ITEMS:
+                continue
+            
+            item = ITEMS[item_id]
+            item_line = f"{item['emoji']} **{item['name']}**: {quantity}"
+            
+            # Categorize by type or name
+            if "chest" in item_id or item.get("type") == "chest":
+                categories["Chests"].append(item_line)
+            elif item.get("type") == "permanent":
+                categories["Permanent"].append(item_line)
+            elif item.get("type") == "rob" or item_id in ["shotgun", "mask", "night_vision", "lockpicker", "guard_dog", "spiky_fence", "lock", "ninjapack"]:
+                categories["Rob Items"].append(item_line)
+            elif item.get("type") == "consumable":
+                categories["Consumables"].append(item_line)
+            else:
+                categories["Other"].append(item_line)
 
         # Check premium status
         premium_cog = self.bot.get_cog('Premium')
@@ -141,15 +169,15 @@ class Inventory(commands.Cog):
         )
         embed.set_thumbnail(url=ctx.author.display_avatar.url)
 
-        items_text = []
-        for item_id, quantity, activated_at in items:
-            if item_id not in ITEMS:
-                continue
-            
-            item = ITEMS[item_id]
-            items_text.append(f"{item['emoji']} **{item['name']}**: {quantity}")
+        # Build organized display
+        display_text = []
+        for category, items_list in categories.items():
+            if items_list:
+                display_text.append(f"**{category}**")
+                display_text.extend(items_list)
+                display_text.append("")  # Blank line between categories
         
-        embed.description = "\n".join(items_text) if items_text else "Your inventory is empty!"
+        embed.description = "\n".join(display_text).strip() if display_text else "Your inventory is empty!"
         embed.set_footer(text="Use 'guse <item>' to activate items")
         await ctx.send(embed=embed)
 
@@ -264,7 +292,7 @@ class Inventory(commands.Cog):
                 )
                 await db.execute("DELETE FROM inventory WHERE user_id = ? AND quantity <= 0", (ctx.author.id,))
                 await db.commit()
-                return await ctx.send(f"<a:Check:1437951818452832318> 🔫 **Shotgun** equipped! You now have **+20%** robbery success rate!")
+                return await ctx.send(f"<a:Check:1437951818452832318> <:shotgun:1458773713418977364> **Shotgun** equipped! You now have **+20%** robbery success rate!")
             
             elif item_id == "thiefpack":
                 await db.execute(
@@ -334,6 +362,23 @@ class Inventory(commands.Cog):
                 await db.execute("DELETE FROM inventory WHERE user_id = ? AND quantity <= 0", (ctx.author.id,))
                 await db.commit()
                 return await ctx.send(f"<a:Check:1437951818452832318> 🔒 **Lock** installed! It will **100% block** the next robbery attempt!")
+            
+            elif item_id == "ninjapack":
+                await db.execute(
+                    "INSERT OR IGNORE INTO rob_items (user_id) VALUES (?)",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE rob_items SET ninjapack = ninjapack + 1 WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute("DELETE FROM inventory WHERE user_id = ? AND quantity <= 0", (ctx.author.id,))
+                await db.commit()
+                return await ctx.send(f"<a:Check:1437951818452832318> <:ninja:1458503378450780408> **Ninja Pack** equipped! Next robbery gets **+30%** success rate and is **anonymous** (1 use)!")
 
             # Check if already active for non-stackable items
             if not item.get("stackable", False):
@@ -365,6 +410,30 @@ class Inventory(commands.Cog):
                     title="<:exp:1437553839359397928> XP Booster Activated!",
                     description="You'll gain **+50% XP** from all activities for the next **30 minutes**!",
                     color=0xF1C40F
+                )
+                return await ctx.send(embed=embed)
+
+            elif item_id == "hot_streak":
+                # Activate hot streak card
+                await db.execute(
+                    "INSERT OR REPLACE INTO active_items (user_id, item_id, activated_at, uses_remaining) VALUES (?, ?, ?, 3)",
+                    (ctx.author.id, item_id, datetime.now().isoformat())
+                )
+                # Remove from inventory
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute(
+                    "DELETE FROM inventory WHERE user_id = ? AND quantity <= 0",
+                    (ctx.author.id,)
+                )
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<:streak:1457966635838214247> Hot Streak Card Activated!",
+                    description="Your next **3 losses** will refund **50%** of your bet!\nValid for 48 hours.",
+                    color=0xE74C3C
                 )
                 return await ctx.send(embed=embed)
 
@@ -411,7 +480,7 @@ class Inventory(commands.Cog):
                 
                 embed = discord.Embed(
                     title="<:dice:1457965149137670186> Lucky Dice Activated!",
-                    description="You have **+5% win chance** on coinflip, dice, and rps for your next **10 games**!\nValid for 24 hours.",
+                    description="You have **+3% win chance** on **ALL gambling games** for your next **10 games**!\nValid for 24 hours.\n\n⚠️ Does not stack with other luck items.",
                     color=0x2ECC71
                 )
                 return await ctx.send(embed=embed)
@@ -431,7 +500,7 @@ class Inventory(commands.Cog):
                 
                 embed = discord.Embed(
                     title="<:luckyhorseshoe:1458353830704975884> Lucky Horseshoe Activated!",
-                    description="You have **+10% win chance** on ALL gambling games for the next **4 hours**!",
+                    description="You have **+5% win chance** on ALL gambling games for the next **4 hours**!\n\n⚠️ Does not stack with other luck items.",
                     color=0xFFD700
                 )
                 return await ctx.send(embed=embed)
@@ -450,8 +519,49 @@ class Inventory(commands.Cog):
                 await db.commit()
                 
                 embed = discord.Embed(
-                    title="🍀 Lucky Clover Activated!",
+                    title="<a:lucky_clover:1459167567154512065> Lucky Clover Activated!",
                     description="You have **+3% win chance** on ALL gambling games for the next **1 hour**!",
+                    color=0x2ECC71
+                )
+                return await ctx.send(embed=embed)
+
+            elif item_id == "battery":
+                # Refill fishing energy
+                from utils.database import add_fishing_energy
+                
+                # Check if premium
+                premium_cog = self.bot.get_cog('Premium')
+                is_premium = False
+                if premium_cog:
+                    is_premium = await premium_cog.is_premium(ctx.author.id)
+                
+                max_energy = 9 if is_premium else 6
+                
+                # Get current energy
+                from utils.database import get_fishing_energy
+                current_energy = await get_fishing_energy(ctx.author.id, is_premium)
+                
+                if current_energy >= max_energy:
+                    return await ctx.send("<a:X_:1437951830393884788> Your fishing energy is already full!")
+                
+                # Refill to max
+                energy_added = max_energy - current_energy
+                await db.execute(
+                    "UPDATE accounts SET fishing_energy = ? WHERE user_id = ?",
+                    (max_energy, ctx.author.id)
+                )
+                
+                # Consume the battery
+                await db.execute(
+                    "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
+                    (ctx.author.id, item_id)
+                )
+                await db.execute("DELETE FROM inventory WHERE quantity <= 0")
+                await db.commit()
+                
+                embed = discord.Embed(
+                    title="<:battery:1459191867081101392> Battery Used!",
+                    description=f"Fishing energy fully recharged!\n**+{energy_added}** <:energy:1459189042574004224> ({current_energy}/{max_energy} → {max_energy}/{max_energy})",
                     color=0x2ECC71
                 )
                 return await ctx.send(embed=embed)
@@ -528,7 +638,7 @@ class Inventory(commands.Cog):
                 
                 embed = discord.Embed(
                     title="<:goldenchip:1457964285207646264> Golden Chip Activated!",
-                    description="Your next coinflip or blackjack win will get **+30% bonus**!",
+                    description="Your next winning bet will get **+30% profit bonus**!\nWorks on: Coinflip, Slots, Roulette, Blackjack, Hi-Lo, Tower, Mines, RPS, Wheel",
                     color=0xFFD700
                 )
                 return await ctx.send(embed=embed)

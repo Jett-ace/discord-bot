@@ -16,6 +16,8 @@ CHEST_TYPES = {
             "mora": (10000, 50000),
             "xp": (100, 500),
             "items": {
+                "wormbait": 0.15,         # 15% chance - Common bait
+                "scorpion": 0.08,         # 8% chance - Uncommon bait
                 "xp_booster": 0.003,      # 0.3% chance
                 "lucky_dice": 0.002,      # 0.2% chance
                 "golden_chip": 0.001,     # 0.1% chance
@@ -29,36 +31,41 @@ CHEST_TYPES = {
             "mora": (50000, 150000),
             "xp": (500, 1500),
             "items": {
+                # Bait items
+                "wormbait": 0.25,         # 25% - Very common
+                "scorpion": 0.18,         # 18% - Common
+                
                 # Common items (higher odds)
-                "xp_booster": 0.008,      # 0.8% - Common
-                "fence": 0.007,           # 0.7% - Common
-                "lock": 0.006,            # 0.6% - Common
+                "xp_booster": 0.012,      # 1.2% - Common
+                "fence": 0.010,           # 1.0% - Common
+                "lock": 0.009,            # 0.9% - Common
                 
                 # Uncommon items
-                "lucky_dice": 0.006,      # 0.6% - Uncommon
-                "shotgun": 0.005,         # 0.5% - Uncommon
-                "guarddog": 0.004,        # 0.4% - Uncommon
+                "lucky_dice": 0.008,      # 0.8% - Uncommon
+                "shotgun": 0.007,         # 0.7% - Uncommon
+                "guarddog": 0.006,        # 0.6% - Uncommon
                 
                 # Rare items
-                "golden_chip": 0.004,     # 0.4% - Rare
-                "thiefpack": 0.003,       # 0.3% - Rare
+                "golden_chip": 0.005,     # 0.5% - Rare
+                "thiefpack": 0.004,       # 0.4% - Rare
                 
                 # Epic items
-                "double_down": 0.003,     # 0.3% - Epic
-                "bankers_key": 0.002,     # 0.2% - Epic
-                "streak_shield": 0.0015,  # 0.15% - Epic
+                "double_down": 0.004,     # 0.4% - Epic
+                "bankers_key": 0.003,     # 0.3% - Epic
+                "streak_shield": 0.0025,  # 0.25% - Epic
+                "ninjapack": 0.002,       # 0.2% - Epic
                 
-                # Legendary items (SUPER RARE)
-                "hot_streak": 0.001,      # 0.1% - Legendary
-                "card_counter": 0.0008,   # 0.08% - Legendary
-                "piggy_bank": 0.0006,     # 0.06% - Legendary
-                "rigged_deck": 0.0005,    # 0.05% - Legendary
-                "bank_upgrade": 0.0004,   # 0.04% - Legendary
+                # Legendary items
+                "hot_streak": 0.0015,     # 0.15% - Legendary
+                "card_counter": 0.0012,   # 0.12% - Legendary
+                "piggy_bank": 0.001,      # 0.1% - Legendary
+                "rigged_deck": 0.0008,    # 0.08% - Legendary
+                "bank_upgrade": 0.0006,   # 0.06% - Legendary
                 
                 # Mythic items (ULTRA RARE)
-                "lucky_horseshoe": 0.0003, # 0.03% - Mythic
-                "plasma_canon": 0.0002,   # 0.02% - Mythic
-                "special_crate": 0.0001,  # 0.01% - Mythic
+                "lucky_horseshoe": 0.0005, # 0.05% - Mythic
+                "plasma_canon": 0.0003,   # 0.03% - Mythic
+                "special_crate": 0.00005,  # 0.005% - Mythic (1 in 20,000)
             }
         }
     }
@@ -66,6 +73,8 @@ CHEST_TYPES = {
 
 # Item emojis mapping
 ITEM_EMOJIS = {
+    "wormbait": "<:wormbait:1458986452871282698>",
+    "scorpion": "<:scorpion:1458986549722087586>",
     "lucky_dice": "<:dice:1457965149137670186>",
     "golden_chip": "<:goldenchip:1457964285207646264>",
     "xp_booster": "<:exp:1437553839359397928>",
@@ -79,14 +88,18 @@ ITEM_EMOJIS = {
     "piggy_bank": "<:goldenbank:1458347495183876210>",
     "lucky_horseshoe": "<:luckyhorseshoe:1458353830704975884>",
     "bank_upgrade": "<:upgrade:1457983244682268695>",
-    "shotgun": "🔫",
+    "shotgun": "<:shotgun:1458773713418977364>",
     "thiefpack": "🎒",
     "guarddog": "🐕",
     "fence": "<:fench:1458002114260242454>",
-    "lock": "🔒"
+    "lock": "🔒",
+    "ninjapack": "<:ninja:1458503378450780408>",
+    "special_crate": "<a:crate:1457969509770985492>"
 }
 
 ITEM_NAMES = {
+    "wormbait": "Wormbait",
+    "scorpion": "Scorpion",
     "lucky_dice": "Lucky Dice",
     "golden_chip": "Golden Chip",
     "xp_booster": "XP Booster",
@@ -94,7 +107,7 @@ ITEM_NAMES = {
     "streak_shield": "Daily Streak Shield",
     "hot_streak": "Hot Streak Card",
     "rigged_deck": "Rigged Deck",
-    "plasma_canon": "Plasma Canon",
+    "plasma_canon": "Plasma Cannon",
     "card_counter": "Card Counter",
     "double_down": "Double Down Card",
     "piggy_bank": "Golden Piggy Bank",
@@ -104,7 +117,9 @@ ITEM_NAMES = {
     "thiefpack": "Thief Pack",
     "guarddog": "Guard Dog",
     "fence": "Spiky Fence",
-    "lock": "Lock"
+    "lock": "Lock",
+    "ninjapack": "Ninja Pack",
+    "special_crate": "Special Crate"
 }
 
 
@@ -113,13 +128,19 @@ class Chests(commands.Cog):
         self.bot = bot
 
     @commands.command(name="open", aliases=["openchest"])
-    async def open_chest(self, ctx, *, chest_type: str = None):
-        """Open a chest from your inventory"""
+    async def open_chest(self, ctx, chest_type: str = None, amount: int = 1):
+        """Open chest(s) from your inventory. Max 5 at once for regular/diamond."""
         if not await require_enrollment(ctx):
             return
 
         if chest_type is None:
-            return await ctx.send("<a:X_:1437951830393884788> Usage: `gopen <chest type>`\nTypes: `regular`, `diamond`, `special`, `random`")
+            return await ctx.send("<a:X_:1437951830393884788> Usage: `gopen <chest type> [amount]`\nTypes: `regular`, `diamond`, `special`, `random`\nExample: `gopen diamond 5`")
+
+        # Validate amount
+        if amount < 1:
+            return await ctx.send("<a:X_:1437951830393884788> Amount must be at least 1!")
+        if amount > 5:
+            return await ctx.send("<a:X_:1437951830393884788> You can only open up to 5 chests at once!")
 
         chest_input = chest_type.lower().replace(" ", "")  # Remove spaces for "special crate"
         
@@ -132,8 +153,12 @@ class Chests(commands.Cog):
         elif chest_input in ["diamond", "dia", "dimond"]:
             matched_chest = "diamond"
         elif chest_input in ["special", "specialcrate", "crate"]:
+            if amount > 1:
+                return await ctx.send("<a:X_:1437951830393884788> You can only open 1 special crate at a time!")
             return await self.open_special_crate(ctx)
         elif chest_input == "random":
+            if amount > 1:
+                return await ctx.send("<a:X_:1437951830393884788> You can only open 1 random chest at a time!")
             return await self.open_random_chest(ctx)
         
         # For regular and diamond chests
@@ -150,14 +175,15 @@ class Chests(commands.Cog):
             ) as cursor:
                 result = await cursor.fetchone()
         
-        if not result or result[0] <= 0:
-            return await ctx.send(f"<a:X_:1437951830393884788> You don't have any {CHEST_TYPES[chest_type]['emoji']} **{CHEST_TYPES[chest_type]['name']}**!")
+        if not result or result[0] < amount:
+            available = result[0] if result else 0
+            return await ctx.send(f"<a:X_:1437951830393884788> You don't have enough {CHEST_TYPES[chest_type]['emoji']} **{CHEST_TYPES[chest_type]['name']}**! You have {available}, need {amount}.")
 
-        # Consume one chest
+        # Consume chests
         async with aiosqlite.connect(DB_PATH) as db:
             await db.execute(
-                "UPDATE inventory SET quantity = quantity - 1 WHERE user_id = ? AND item_id = ?",
-                (ctx.author.id, chest_type)
+                "UPDATE inventory SET quantity = quantity - ? WHERE user_id = ? AND item_id = ?",
+                (amount, ctx.author.id, chest_type)
             )
             await db.execute(
                 "DELETE FROM inventory WHERE user_id = ? AND item_id = ? AND quantity <= 0",
@@ -166,24 +192,63 @@ class Chests(commands.Cog):
             await db.commit()
 
         chest = CHEST_TYPES[chest_type]
-        # Generate rewards
-        rewards = chest["rewards"]
-        mora_reward = random.randint(rewards["mora"][0], rewards["mora"][1])
-        xp_reward = random.randint(rewards["xp"][0], rewards["xp"][1])
+        
+        # Track totals across all chests
+        total_mora = 0
+        total_xp = 0
+        all_items_won = []
+        
+        # Open each chest
+        for _ in range(amount):
+            # Generate rewards
+            rewards = chest["rewards"]
+            mora_reward = random.randint(rewards["mora"][0], rewards["mora"][1])
+            xp_reward = random.randint(rewards["xp"][0], rewards["xp"][1])
+            total_mora += mora_reward
+            total_xp += xp_reward
 
-        # Check for item drops
-        items_won = []
-        for item_id, chance in rewards["items"].items():
-            if random.random() < chance:
-                items_won.append(item_id)
+            # Guaranteed item drops based on chest type
+            items_won = []
+            
+            if chest_type == "regular":
+                # Regular chest: 1-2 guaranteed items with weighted selection
+                num_items = random.randint(1, 2)
+                item_pool = list(rewards["items"].keys())
+                # Use actual probabilities as weights (higher prob = more common)
+                weights = [rewards["items"][item] for item in item_pool]
+                for _ in range(num_items):
+                    if item_pool:
+                        chosen = random.choices(item_pool, weights=weights, k=1)[0]
+                        items_won.append(chosen)
+                        # Remove chosen item to avoid duplicates in same chest
+                        idx = item_pool.index(chosen)
+                        item_pool.pop(idx)
+                        weights.pop(idx)
+            
+            elif chest_type == "diamond":
+                # Diamond chest: 2-4 guaranteed items with weighted selection
+                num_items = random.randint(2, 4)
+                item_pool = list(rewards["items"].keys())
+                # Use actual probabilities as weights (higher prob = more common)
+                weights = [rewards["items"][item] for item in item_pool]
+                for _ in range(num_items):
+                    if item_pool:
+                        chosen = random.choices(item_pool, weights=weights, k=1)[0]
+                        items_won.append(chosen)
+                        # Remove chosen item to avoid duplicates in same chest
+                        idx = item_pool.index(chosen)
+                        item_pool.pop(idx)
+                        weights.pop(idx)
+            
+            all_items_won.extend(items_won)
 
         # Award mora
-        await update_user_data(ctx.author.id, mora=(await get_user_data(ctx.author.id))["mora"] + mora_reward)
+        await update_user_data(ctx.author.id, mora=(await get_user_data(ctx.author.id))["mora"] + total_mora)
 
         # Award XP
         try:
             from utils.database import add_account_exp, has_xp_booster
-            exp_to_add = xp_reward
+            exp_to_add = total_xp
             if await has_xp_booster(ctx.author.id):
                 exp_to_add = int(exp_to_add * 1.5)
             leveled_up, new_level, old_level = await add_account_exp(ctx.author.id, exp_to_add)
@@ -192,9 +257,9 @@ class Chests(commands.Cog):
             new_level = 0
 
         # Award items
-        if items_won:
+        if all_items_won:
             async with aiosqlite.connect(DB_PATH) as db:
-                for item_id in items_won:
+                for item_id in all_items_won:
                     # Check if item exists in inventory
                     async with db.execute(
                         "SELECT quantity FROM inventory WHERE user_id = ? AND item_id = ?",
@@ -215,16 +280,27 @@ class Chests(commands.Cog):
                 await db.commit()
 
         # Build result embed
+        chest_plural = f"{amount}x " if amount > 1 else ""
         embed = discord.Embed(
-            title=f"{chest['emoji']} {chest['name']} Opened!",
-            description="**Rewards:**",
-            color=0x2ECC71 if items_won else 0x3498DB
+            title=f"{chest_plural}{chest['name']} Opened!",
+            description="**Total Rewards:**",
+            color=0x2ECC71 if all_items_won else 0x3498DB
         )
         embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+        
+        # Add chest emoji as thumbnail
+        import re
+        chest_emoji_str = chest['emoji']
+        match = re.match(r'<(a?):[^:]+:(\d+)>', chest_emoji_str)
+        if match:
+            animated, emoji_id = match.groups()
+            ext = 'gif' if animated else 'png'
+            chest_icon_url = f'https://cdn.discordapp.com/emojis/{emoji_id}.{ext}'
+            embed.set_thumbnail(url=chest_icon_url)
 
         embed.add_field(
             name="<:mora:1437958309255577681> Mora",
-            value=f"+{mora_reward:,}",
+            value=f"+{total_mora:,}",
             inline=True
         )
         embed.add_field(
@@ -233,8 +309,24 @@ class Chests(commands.Cog):
             inline=True
         )
 
-        if items_won:
-            items_text = "\n".join([f"{ITEM_EMOJIS[i]} **{ITEM_NAMES[i]}**" for i in items_won])
+        if all_items_won:
+            # Count duplicates and separate chests from other items
+            from collections import Counter
+            item_counts = Counter(all_items_won)
+            
+            # Separate chests and other items
+            chest_items = []
+            other_items = []
+            
+            for item_id, count in item_counts.items():
+                item_line = f"{ITEM_EMOJIS[item_id]} **{ITEM_NAMES[item_id]}** x{count}" if count > 1 else f"{ITEM_EMOJIS[item_id]} **{ITEM_NAMES[item_id]}**"
+                if "chest" in item_id or item_id == "special_crate":
+                    chest_items.append(item_line)
+                else:
+                    other_items.append(item_line)
+            
+            # Display chests first, then other items
+            items_text = "\n".join(chest_items + other_items)
             embed.add_field(
                 name="Bonus Items",
                 value=items_text,
@@ -288,6 +380,7 @@ class Chests(commands.Cog):
             "lucky_dice": 30,          # Most common
             "golden_chip": 25,         # Common
             "xp_booster": 20,          # Uncommon
+            "battery": 18,             # Uncommon (Epic) - Energy refill
             "bankers_key": 15,         # Rare
             "double_down": 14,         # Rare (Epic)
             "rigged_deck": 12,         # Rare
@@ -450,8 +543,7 @@ class Chests(commands.Cog):
             
             # Chests (25% total - increased significantly)
             ("chest", "regular", 1, 0.15, CHEST_TYPES["regular"]["emoji"], "Regular Chest"),
-            ("chest", "diamond", 1, 0.08, CHEST_TYPES["diamond"]["emoji"], "Diamond Chest"),
-            ("chest", "special_crate", 1, 0.02, "<a:crate:1457969509770985492>", "Special Crate"),
+            ("chest", "diamond", 1, 0.10, CHEST_TYPES["diamond"]["emoji"], "Diamond Chest"),
         ]
 
         # Select reward based on probabilities

@@ -71,7 +71,7 @@ class Leaderboard(commands.Cog):
                         LEFT JOIN fishing f ON u.user_id = f.user_id
                         LEFT JOIN user_wishes w ON u.user_id = w.user_id
                         LEFT JOIN (SELECT user_id, COUNT(*) as ach_count FROM achievements GROUP BY user_id) ach ON u.user_id = ach.user_id
-                        LEFT JOIN daily_claims d ON u.user_id = d.user_id
+                        LEFT JOIN daily_claims d ON u.user_id = d.user_id AND (d.claim_type = 'regular' OR d.claim_type IS NULL)
                         WHERE u.enrolled = 1 AND u.user_id IN ({placeholders})
                         ORDER BY total_score DESC
                         LIMIT 10
@@ -105,13 +105,23 @@ class Leaderboard(commands.Cog):
                             LIMIT 10
                         """
                     else:
-                        query = f"""
-                            SELECT user_id, {column}
-                            FROM {table}
-                            WHERE user_id IN ({placeholders})
-                            ORDER BY {column} DESC
-                            LIMIT 10
-                        """
+                        # Special handling for streak to only show regular daily streaks
+                        if category == "streak":
+                            query = f"""
+                                SELECT user_id, {column}
+                                FROM {table}
+                                WHERE user_id IN ({{placeholders}}) AND (claim_type = 'regular' OR claim_type IS NULL)
+                                ORDER BY {column} DESC
+                                LIMIT 10
+                            """
+                        else:
+                            query = f"""
+                                SELECT user_id, {column}
+                                FROM {table}
+                                WHERE user_id IN ({{placeholders}})
+                                ORDER BY {column} DESC
+                                LIMIT 10
+                            """
                     async with db.execute(query, server_member_ids) as cursor:
                         rows = await cursor.fetchall()
                 
@@ -136,7 +146,7 @@ class Leaderboard(commands.Cog):
                 
                 # Build leaderboard text
                 lb_text = []
-                medals = ["🥇", "🥈", "🥉"]
+                medals = ["<a:Medal:1438198856910241842>", "<a:Medal2:1438198813851652117>", "<a:Medal3:1438198826799468604>"]
                 
                 for idx, (user_id, value) in enumerate(rows, 1):
                     try:
@@ -273,7 +283,7 @@ class Leaderboard(commands.Cog):
                         LEFT JOIN fishing f ON u.user_id = f.user_id
                         LEFT JOIN user_wishes w ON u.user_id = w.user_id
                         LEFT JOIN (SELECT user_id, COUNT(*) as ach_count FROM achievements GROUP BY user_id) ach ON u.user_id = ach.user_id
-                        LEFT JOIN daily_claims d ON u.user_id = d.user_id
+                        LEFT JOIN daily_claims d ON u.user_id = d.user_id AND (d.claim_type = 'regular' OR d.claim_type IS NULL)
                         WHERE u.enrolled = 1
                         ORDER BY total_score DESC
                         LIMIT 10
@@ -292,12 +302,22 @@ class Leaderboard(commands.Cog):
                     async with db.execute(query) as cursor:
                         rows = await cursor.fetchall()
                 else:
-                    query = f"""
-                        SELECT user_id, {column}
-                        FROM {table}
-                        ORDER BY {column} DESC
-                        LIMIT 10
-                    """
+                    # For mora category, sum wallet + bank for total wealth
+                    if category == "mora":
+                        query = f"""
+                            SELECT u.user_id, (u.{column} + COALESCE(b.deposited_amount, 0)) as total_wealth
+                            FROM {table} u
+                            LEFT JOIN user_bank_deposits b ON u.user_id = b.user_id
+                            ORDER BY total_wealth DESC
+                            LIMIT 10
+                        """
+                    else:
+                        query = f"""
+                            SELECT user_id, {column}
+                            FROM {table}
+                            ORDER BY {column} DESC
+                            LIMIT 10
+                        """
                     async with db.execute(query) as cursor:
                         rows = await cursor.fetchall()
                 
@@ -322,7 +342,7 @@ class Leaderboard(commands.Cog):
                 
                 # Build leaderboard text
                 lb_text = []
-                medals = ["🥇", "🥈", "🥉"]
+                medals = ["<a:Medal:1438198856910241842>", "<a:Medal2:1438198813851652117>", "<a:Medal3:1438198826799468604>"]
                 
                 for idx, (user_id, value) in enumerate(rows, 1):
                     try:

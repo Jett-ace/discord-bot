@@ -187,10 +187,14 @@ class Tower(commands.Cog):
         premium_cog = self.bot.get_cog('Premium')
         is_premium = False
         if premium_cog:
-            is_premium = await premium_cog.is_premium(ctx.author.id)
+            try:
+                is_premium = await premium_cog.is_premium(ctx.author.id)
+                print(f"[TOWER] User {ctx.author.id} premium status: {is_premium}")
+            except Exception:
+                is_premium = False
         
-        # Premium: 1M, Normal: 100K
         max_bet = 1_000_000 if is_premium else 100_000
+        print(f"[TOWER] User {ctx.author.id} max_bet set to: {max_bet:,}")
         
         if bet_amount > max_bet:
             return await ctx.send(f"❌ Maximum bet is {max_bet:,} mora!")
@@ -274,7 +278,18 @@ class Tower(commands.Cog):
         trap_tile = game['trap_tile']
         
         # Check if hit trap
-        if tile_num == trap_tile:
+        hit_trap = tile_num == trap_tile
+        
+        # Check for lucky dice (+5% chance to avoid trap)
+        from utils.database import has_active_item, consume_active_item
+        has_dice = await has_active_item(user_id, "lucky_dice")
+        
+        if hit_trap and has_dice > 0 and random.random() < 0.03:
+            # Lucky dice triggered - convert trap to safe tile
+            hit_trap = False
+            await consume_active_item(user_id, "lucky_dice")
+        
+        if hit_trap:
             # Hit trap - lose
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute("""

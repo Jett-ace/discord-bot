@@ -250,8 +250,21 @@ class Scramble(commands.Cog):
             if bet_amount < 100:
                 return await ctx.send("❌ Minimum bet is 100 mora!")
             
-            if bet_amount > 100000:
-                return await ctx.send("❌ Maximum bet is 100,000 mora!")
+            # Check premium status for higher bet limit
+            premium_cog = self.bot.get_cog('Premium')
+            is_premium = False
+            if premium_cog:
+                try:
+                    is_premium = await premium_cog.is_premium(ctx.author.id)
+                    print(f"[SCRAMBLE] User {ctx.author.id} premium status: {is_premium}")
+                except Exception:
+                    is_premium = False
+            
+            MAX_BET = 250_000 if is_premium else 100_000
+            print(f"[SCRAMBLE] User {ctx.author.id} MAX_BET set to: {MAX_BET:,}")
+            
+            if bet_amount > MAX_BET:
+                return await ctx.send(f"❌ Maximum bet is {MAX_BET:,} mora!")
             
             # Get user balance
             async with aiosqlite.connect(DB_PATH) as db:
@@ -274,8 +287,18 @@ class Scramble(commands.Cog):
             balance = 0
         
         # Determine difficulty
-        if difficulty and difficulty.lower() in WORD_LISTS:
-            diff = difficulty.lower()
+        difficulty_map = {
+            "1": "easy", "2": "medium", "3": "hard", "4": "expert",
+            "easy": "easy", "medium": "medium", "hard": "hard", "expert": "expert"
+        }
+        
+        if difficulty:
+            diff = difficulty_map.get(difficulty.lower())
+            if not diff:
+                return await ctx.send(
+                    f"❌ Invalid difficulty '{difficulty}'!\n"
+                    f"Valid options: 1/easy, 2/medium, 3/hard, 4/expert"
+                )
         else:
             # Random difficulty based on bet amount
             if bet_amount < 1000:
@@ -574,8 +597,21 @@ class Scramble(commands.Cog):
         if bet_amount < 100:
             return await ctx.send("❌ Minimum bet is 100 mora!")
         
-        if bet_amount > 50000:
-            return await ctx.send("❌ Maximum bet is 50,000 mora!")
+        # Check premium status for higher bet limit
+        premium_cog = self.bot.get_cog('Premium')
+        is_premium = False
+        if premium_cog:
+            try:
+                is_premium = await premium_cog.is_premium(ctx.author.id)
+                print(f"[MATH] User {ctx.author.id} premium status: {is_premium}")
+            except Exception:
+                is_premium = False
+        
+        MAX_BET = 250_000 if is_premium else 50_000
+        print(f"[MATH] User {ctx.author.id} MAX_BET set to: {MAX_BET:,}")
+        
+        if bet_amount > MAX_BET:
+            return await ctx.send(f"❌ Maximum bet is {MAX_BET:,} mora!")
         
         # Get user balance
         async with aiosqlite.connect(DB_PATH) as db:

@@ -70,7 +70,21 @@ class RPS(commands.Cog):
             }
             bot_choice = losing_choices[user_choice]
         else:
-            bot_choice = random.choice(rpsgame)
+            # Check for lucky dice (+3% win chance)
+            from utils.database import has_active_item, consume_active_item, consume_inventory_item
+            has_dice = await has_active_item(ctx.author.id, "lucky_dice")
+            
+            if has_dice > 0 and random.random() < 0.03:
+                # Lucky dice triggered - force a win
+                losing_choices = {
+                    "rock": "scissors",
+                    "paper": "rock",
+                    "scissors": "paper"
+                }
+                bot_choice = losing_choices[user_choice]
+                await consume_active_item(ctx.author.id, "lucky_dice")
+            else:
+                bot_choice = random.choice(rpsgame)
 
         # Choice icons
         choice_icons = {"rock": "🪨", "paper": "📜", "scissors": "✂️"}

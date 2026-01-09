@@ -223,12 +223,23 @@ class Roulette(commands.Cog):
             payout = bet_amount * multiplier
             profit = payout  # Net profit
             
-            # Check for Double Down Card (must be activated first)
+            # Check for Golden Chip (adds +30% to profit)
             from utils.database import has_active_item, consume_active_item, consume_inventory_item
+            has_chip = await has_active_item(ctx.author.id, "golden_chip")
+            chip_bonus = 0
+            if has_chip > 0:
+                chip_bonus = int(profit * 0.3)
+                payout += chip_bonus
+                profit += chip_bonus
+                await consume_active_item(ctx.author.id, "golden_chip")
+                await consume_inventory_item(ctx.author.id, "golden_chip")
+            
+            # Check for Double Down Card (must be activated first)
             has_double = await has_active_item(ctx.author.id, "double_down")
             double_active = False
             if has_double > 0:
-                payout *= 2  # Double the entire payout
+                # Double Down doubles the entire payout including chip bonus
+                payout *= 2
                 profit *= 2
                 await consume_active_item(ctx.author.id, "double_down")
                 await consume_inventory_item(ctx.author.id, "double_down")
@@ -256,9 +267,18 @@ class Roulette(commands.Cog):
                 color=0x2ECC71
             )
             embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
-            embed.add_field(name="Result", value="Winner!" + (" 💳 **DOUBLE DOWN!**" if double_active else ""), inline=True)
+            
+            result_text = "Winner!"
+            if double_active:
+                result_text += " 💳 **DOUBLE DOWN!**"
+            
+            embed.add_field(name="Result", value=result_text, inline=True)
             embed.add_field(name="Payout", value=f"{payout:,} <:mora:1437958309255577681> ({multiplier}:1{'x2' if double_active else ''})", inline=True)
-            embed.add_field(name="Profit", value=f"+{profit:,} <:mora:1437958309255577681>", inline=True)
+            
+            profit_text = f"+{profit:,} <:mora:1437958309255577681>"
+            if chip_bonus > 0:
+                profit_text += f"\n<:goldenchip:1457964285207646264> Golden Chip: +{chip_bonus:,} bonus"
+            embed.add_field(name="Profit", value=profit_text, inline=True)
             
             if exp_reward > 0:
                 embed.add_field(name="XP", value=f"+{exp_reward} XP", inline=True)
@@ -271,11 +291,11 @@ class Roulette(commands.Cog):
             
             # Check for Hot Streak Card (50% refund on loss)
             from utils.database import has_active_item, consume_active_item
-            has_hot = await has_active_item(ctx.author.id, "streak")
+            has_hot = await has_active_item(ctx.author.id, "hot_streak")
             hot_refund = 0
             if has_hot > 0:
                 hot_refund = int(bet_amount * 0.5)
-                await consume_active_item(ctx.author.id, "streak")
+                await consume_active_item(ctx.author.id, "hot_streak")
                 new_mora += hot_refund
             
             await update_user_data(ctx.author.id, mora=new_mora)
@@ -317,10 +337,6 @@ class Roulette(commands.Cog):
             if cashback > 0:
                 loss_value += f"\n+{cashback:,} cashback <a:gold:1457409675963138205>"
             embed.add_field(name="Lost", value=loss_value, inline=True)
-
-        # Show recent spins
-        recent = " ".join([f"{n}" for n in self.recent_spins[ctx.author.id]])
-        embed.set_footer(text=f"Recent spins: {recent}")
         
         await send_embed(ctx, embed)
 

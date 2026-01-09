@@ -286,6 +286,15 @@ class HiLo(commands.Cog):
         # Check if guess is correct
         correct = (guess == "higher" and new_value > previous_value) or (guess == "lower" and new_value < previous_value)
         
+        # Check for lucky dice (+5% win chance on wrong guesses)
+        from utils.database import has_active_item, consume_active_item
+        has_dice = await has_active_item(user_id, "lucky_dice")
+        
+        if not correct and has_dice > 0 and random.random() < 0.03:
+            # Lucky dice triggered - convert loss to win
+            correct = True
+            await consume_active_item(user_id, "lucky_dice")
+        
         if correct:
             game['streak'] += 1
             game['current_card'] = new_card

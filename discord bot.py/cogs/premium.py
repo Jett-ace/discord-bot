@@ -38,15 +38,10 @@ class PremiumSelectView(ui.View):
                 color=0xFFD700
             )
             embed.add_field(
-                name="💬 AI Features",
-                value="<a:arrow:1437968863026479258> **AI Chat Bot** - Talk with advanced AI using `ghey`",
-                inline=False
-            )
-            embed.add_field(
                 name="🎮 Game Advantages",
                 value=(
                     "<a:arrow:1437968863026479258> **Better luck** in RPS, Wheel, Coinflip, Slots\n"
-                    "<a:arrow:1437968863026479258> **3x betting limits** on all games (bet bigger!)\n"
+                    "<a:arrow:1437968863026479258> **Increased betting limits** on all games (bet bigger!)\n"
                     "<a:arrow:1437968863026479258> **Unlimited RPS plays** (vs 5 per 5 minutes)\n"
                     "<a:arrow:1437968863026479258> **Bundle daily command** (`gbundle`)\n"
                     "<a:arrow:1437968863026479258> **3x daily rewards** (triple mora & items)\n"
@@ -106,10 +101,10 @@ class PremiumSelectView(ui.View):
             embed.add_field(
                 name="🎡 Wheel of Fortune",
                 value=(
-                    "<a:arrow:1437968863026479258> **Slightly better odds**\n"
-                    "<a:arrow:1437968863026479258> Less bad outcomes (0.2x/0.5x reduced)\n"
-                    "<a:arrow:1437968863026479258> More good outcomes (2x/5x increased)\n"
-                    "<a:arrow:1437968863026479258> **Better jackpot chance** (1.3% vs 1%)"
+                    "<a:arrow:1437968863026479258> **10% better odds overall**\n"
+                    "<a:arrow:1437968863026479258> 37% loss rate vs 47% normal\n"
+                    "<a:arrow:1437968863026479258> More winning outcomes (28% 2x vs 22%)\n"
+                    "<a:arrow:1437968863026479258> Win streak balancing prevents abuse"
                 ),
                 inline=False
             )
@@ -141,7 +136,7 @@ class PremiumSelectView(ui.View):
                 inline=False
             )
             embed.add_field(
-                name="🔫 Rob System",
+                name="<:shotgun:1458773713418977364> Rob System",
                 value=(
                     "<a:arrow:1437968863026479258> **Shorter cooldowns**: 20min success / 40min fail\n"
                     "<a:arrow:1437968863026479258> **+15% success rate** (35% base vs 20%)\n"
@@ -216,17 +211,6 @@ class PremiumSelectView(ui.View):
                 color=0xE91E63
             )
             embed.add_field(
-                name="💬 AI Chat Bot",
-                value=(
-                    "<a:arrow:1437968863026479258> **Command:** `ghey <message>`\n"
-                    "<a:arrow:1437968863026479258> Talk naturally with advanced AI\n"
-                    "<a:arrow:1437968863026479258> Contextual conversations\n"
-                    "<a:arrow:1437968863026479258> Smart responses\n"
-                    "<a:arrow:1437968863026479258> **100% exclusive to Premium**"
-                ),
-                inline=False
-            )
-            embed.add_field(
                 name="⭐ Bundle Daily Rewards",
                 value=(
                     "<a:arrow:1437968863026479258> **Command:** `gbundle` (or `gbd`)\n"
@@ -242,9 +226,9 @@ class PremiumSelectView(ui.View):
                 value=(
                     "<a:arrow:1437968863026479258> **RPS: +15% luck boost**\n"
                     "<a:arrow:1437968863026479258> **Coinflip: +8% luck bonus**\n"
-                    "<a:arrow:1437968863026479258> **Wheel: Better odds distribution**\n"
+                    "<a:arrow:1437968863026479258> **Wheel: 10% better odds (37% vs 47% loss)**\n"
                     "<a:arrow:1437968863026479258> **Slots: 10% force-win chance**\n"
-                    "<a:arrow:1437968863026479258> **Subtle but helpful advantages**"
+                    "<a:arrow:1437968863026479258> **Win streak balancing for fairness**"
                 ),
                 inline=False
             )
@@ -335,7 +319,6 @@ class PremiumSelectView(ui.View):
                 value=(
                     "Your subscription supports:\n"
                     "<a:arrow:1437968863026479258> 24/7 bot hosting\n"
-                    "<a:arrow:1437968863026479258> AI chat API costs\n"
                     "<a:arrow:1437968863026479258> Development & updates\n"
                     "<a:arrow:1437968863026479258> Server maintenance"
                 ),
@@ -440,8 +423,7 @@ class Premium(commands.Cog):
             value=(
                 "<a:arrow:1437968863026479258> **Better luck in games** (RPS, Coinflip, Wheel, Slots)\n"
                 "<a:arrow:1437968863026479258> **Bundle daily command** (`gbundle`)\n"
-                "<a:arrow:1437968863026479258> **AI Chat Bot** (`ghey` command)\n"
-                "<a:arrow:1437968863026479258> **3x betting limits** (bet bigger!)\n"
+                "<a:arrow:1437968863026479258> **Increased betting limits** (bet bigger!)\n"
                 "<a:arrow:1437968863026479258> **3x daily rewards** (mora & items)\n"
                 "<a:arrow:1437968863026479258> **Unlimited bank deposits**\n"
                 "<a:arrow:1437968863026479258> **Custom badge everywhere**\n"

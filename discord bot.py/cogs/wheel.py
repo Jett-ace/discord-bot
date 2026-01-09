@@ -13,6 +13,7 @@ logger = setup_logger("Wheel")
 class Wheel(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.premium_win_streaks = {}  # Track premium user win streaks {user_id: (wins, threshold)}
 
     @commands.command(name="wheel", aliases=["spin"])
     @commands.cooldown(1, 7, commands.BucketType.user)
@@ -37,10 +38,16 @@ class Wheel(commands.Cog):
             premium_cog = self.bot.get_cog('Premium')
             is_premium = False
             if premium_cog:
-                is_premium = await premium_cog.is_premium(ctx.author.id)
+                try:
+                    is_premium = await premium_cog.is_premium(ctx.author.id)
+                    logger.info(f"User {ctx.author.id} premium status: {is_premium}")
+                except Exception as e:
+                    logger.error(f"Premium check failed: {e}")
+                    is_premium = False
             
             # Premium: 1M, Normal: 200K
             MAX_BET = 1_000_000 if is_premium else 200_000
+            logger.info(f"User {ctx.author.id} MAX_BET set to: {MAX_BET:,}")
 
             # Show help embed if no bet provided
             if bet is None:
@@ -57,16 +64,35 @@ class Wheel(commands.Cog):
                     f"**Max bet:** {MAX_BET:,} <:mora:1437958309255577681>",
                     inline=False,
                 )
+                
+                # Show different odds based on premium status
+                if is_premium:
+                    outcomes_text = (
+                        "💸 **Bankrupt** (1%) - Lose bet + 10% penalty\n"
+                        "💔 **0.2x** (15%) - Get 20% back\n"
+                        "🎯 **0.5x** (21%) - Get half back\n"
+                        "💰 **1.2x** (21%) - Small profit\n"
+                        "💎 **2x** (28%) - Double your bet\n"
+                        "💵 **5x** (9%) - 5x profit\n"
+                        "🌟 **10x** (3%) - 10x profit\n"
+                        "👑 **JACKPOT 50x** (2%) - Massive win!\n\n"
+                        "⭐ **Premium: 10% better odds!**"
+                    )
+                else:
+                    outcomes_text = (
+                        "💸 **Bankrupt** (2%) - Lose bet + 10% penalty\n"
+                        "💔 **0.2x** (22%) - Get 20% back\n"
+                        "🎯 **0.5x** (23%) - Get half back\n"
+                        "💰 **1.2x** (19%) - Small profit\n"
+                        "💎 **2x** (22%) - Double your bet\n"
+                        "💵 **5x** (5%) - 5x profit\n"
+                        "🌟 **10x** (3%) - 10x profit\n"
+                        "👑 **JACKPOT 50x** (2%) - Massive win!"
+                    )
+                
                 embed.add_field(
                     name="🎯 Possible Outcomes",
-                    value="💸 **Bankrupt** (1%) - Lose bet + 10% penalty\n"
-                    "💔 **0.2x** (20%) - Get 20% back\n"
-                    "🎯 **0.5x** (24%) - Get half back\n"
-                    "💰 **1.2x** (20%) - Small profit\n"
-                    "💎 **2x** (24%) - Double your bet\n"
-                    "💵 **5x** (6%) - 5x profit\n"
-                    "🌟 **10x** (4%) - 10x profit\n"
-                    "👑 **JACKPOT 50x** (1%) - Massive win!",
+                    value=outcomes_text,
                     inline=False,
                 )
                 embed.add_field(
@@ -115,39 +141,49 @@ class Wheel(commands.Cog):
 
             await update_user_data(ctx.author.id, mora=mora - bet_amount)
 
-            # Check premium status for better odds
-            premium_cog = self.bot.get_cog('Premium')
-            is_premium = False
-            if premium_cog:
-                is_premium = await premium_cog.is_premium(ctx.author.id)
-
-            # Premium users get slightly improved odds
+            # Premium users get better odds (10% advantage)
             if is_premium:
                 segments = [
-                    ("💸 Bankrupt", 0, 1),      # 1% (same)
-                    ("💔 0.2x", 0.2, 18),       # 18% (reduced from 20%)
-                    ("🎯 0.5x", 0.5, 23),       # 23% (reduced from 24%)
-                    ("💰 1.2x", 1.2, 21),       # 21% (increased from 20%)
-                    ("💎 2x", 2, 25),           # 25% (increased from 24%)
-                    ("💵 5x", 5, 7),            # 7% (increased from 6%)
-                    ("🌟 10x", 10, 3),          # 3% (reduced from 4%)
-                    ("👑 JACKPOT", 50, 2),      # 2% (increased from 1%)
+                    ("💸 Bankrupt", 0, 1),      # 1%
+                    ("💔 0.2x", 0.2, 15),       # 15%
+                    ("🎯 0.5x", 0.5, 21),       # 21%
+                    ("💰 1.2x", 1.2, 21),       # 21%
+                    ("💎 2x", 2, 28),           # 28%
+                    ("💵 5x", 5, 9),            # 9%
+                    ("🌟 10x", 10, 3),          # 3%
+                    ("👑 JACKPOT", 50, 2),      # 2%
                 ]
             else:
+                # Normal users: ~47% chance to lose money, ~53% to profit/break even
                 segments = [
-                    ("💸 Bankrupt", 0, 1),
-                    ("💔 0.2x", 0.2, 20),
-                    ("🎯 0.5x", 0.5, 24),
-                    ("💰 1.2x", 1.2, 20),
-                    ("💎 2x", 2, 24),
-                    ("💵 5x", 5, 6),
-                    ("🌟 10x", 10, 4),
-                    ("👑 JACKPOT", 50, 1),
+                    ("💸 Bankrupt", 0, 2),      # 2% - total loss + penalty
+                    ("💔 0.2x", 0.2, 22),       # 22% - lose 80%
+                    ("🎯 0.5x", 0.5, 23),       # 23% - lose 50%
+                    ("💰 1.2x", 1.2, 19),       # 19% - small profit
+                    ("💎 2x", 2, 22),           # 22% - double
+                    ("💵 5x", 5, 5),            # 5% - 5x
+                    ("🌟 10x", 10, 3),          # 3% - 10x
+                    ("👑 JACKPOT", 50, 2),      # 2% - jackpot
                 ]
 
             wheel_pool = []
             for segment, multiplier, weight in segments:
                 wheel_pool.extend([(segment, multiplier)] * weight)
+
+            # Check for lucky items for better odds
+            from utils.database import has_active_item, consume_active_item
+            has_dice = await has_active_item(ctx.author.id, "lucky_dice")
+            has_horseshoe = await has_active_item(ctx.author.id, "lucky_horseshoe")
+            
+            # Calculate luck bonus (items don't stack - use best one only)
+            luck_bonus = 0
+            luck_item_used = None
+            if has_horseshoe > 0:
+                luck_bonus = 0.05  # +5% from lucky horseshoe (higher priority)
+                luck_item_used = "horseshoe"
+            elif has_dice > 0:
+                luck_bonus = 0.03  # +3% from lucky dice
+                luck_item_used = "dice"
 
             try:
                 spin_msg = await ctx.send("**Spinning the wheel...** 🎡")
@@ -164,6 +200,44 @@ class Wheel(commands.Cog):
                 pass
 
             result_segment, multiplier = random.choice(wheel_pool)
+            
+            # Premium balancing: Force loss after win streak (4-7 wins randomly)
+            if is_premium and multiplier >= 1.0:
+                user_id = ctx.author.id
+                
+                # Initialize or get current streak
+                if user_id not in self.premium_win_streaks:
+                    self.premium_win_streaks[user_id] = (0, random.randint(4, 7))
+                
+                wins, threshold = self.premium_win_streaks[user_id]
+                wins += 1
+                
+                # Force a loss if threshold reached
+                if wins >= threshold:
+                    # Force a bad outcome
+                    bad_outcomes = [seg for seg in wheel_pool if seg[1] < 1.0]
+                    result_segment, multiplier = random.choice(bad_outcomes)
+                    # Reset with new random threshold
+                    self.premium_win_streaks[user_id] = (0, random.randint(4, 7))
+                    logger.info(f"Premium user {user_id} forced loss after {wins} wins")
+                else:
+                    # Update streak
+                    self.premium_win_streaks[user_id] = (wins, threshold)
+            elif is_premium and multiplier < 1.0:
+                # Reset streak on natural loss
+                self.premium_win_streaks[ctx.author.id] = (0, random.randint(4, 7))
+            
+            # Apply luck bonus: chance to reroll bad outcomes
+            if luck_bonus > 0 and multiplier < 1.0:
+                if random.random() < luck_bonus:
+                    # Reroll for better outcome
+                    result_segment, multiplier = random.choice(wheel_pool)
+                    
+                    # Consume the luck item that was used
+                    if luck_item_used == "horseshoe":
+                        await consume_active_item(ctx.author.id, "lucky_horseshoe")
+                    elif luck_item_used == "dice":
+                        await consume_active_item(ctx.author.id, "lucky_dice")
 
             if multiplier == 0:
                 # Bankrupt: lose bet + 10% of remaining mora
@@ -182,10 +256,11 @@ class Wheel(commands.Cog):
                     cashback = await bank_cog.apply_golden_cashback(ctx.author.id, total_loss)
                 
                 payout = 0
+                net_profit = -total_loss
                 color = 0x95A5A6
-                result_text = f"💥 You landed on {result_segment}!\nLost your bet of {bet_amount:,} <:mora:1437958309255577681> + 10% penalty ({penalty:,} <:mora:1437958309255577681>)\nTotal loss: {total_loss:,} <:mora:1437958309255577681>"
+                result_text = f"You landed on {result_segment} and lost {total_loss:,} <:mora:1437958309255577681>!"
                 if cashback > 0:
-                    result_text += f"\n+{cashback:,} cashback <a:gold:1457409675963138205>"
+                    result_text += f" (+{cashback:,} cashback)"
             elif multiplier < 1:
                 # Partial loss
                 payout = int(bet_amount * multiplier)
@@ -197,15 +272,26 @@ class Wheel(commands.Cog):
                 if bank_cog:
                     cashback = await bank_cog.apply_golden_cashback(ctx.author.id, loss_amount)
                 
+                net_profit = payout - bet_amount
                 color = 0xE67E22
-                result_text = f"You landed on {result_segment} and got back {payout:,} <:mora:1437958309255577681>."
+                result_text = f"You landed on {result_segment} and got back {payout:,} <:mora:1437958309255577681>!"
                 if cashback > 0:
-                    result_text += f"\n+{cashback:,} cashback <a:gold:1457409675963138205>"
+                    result_text += f" (+{cashback:,} cashback)"
             elif multiplier == 50:
                 payout = int(bet_amount * multiplier)
                 
-                # Check for Double Down Card (must be activated first)
+                # Check for Golden Chip bonus (adds +30% to profit)
                 from utils.database import has_active_item, consume_active_item, consume_inventory_item
+                has_chip = await has_active_item(ctx.author.id, "golden_chip")
+                chip_bonus = 0
+                if has_chip > 0:
+                    profit = payout - bet_amount
+                    chip_bonus = int(profit * 0.3)
+                    payout += chip_bonus
+                    await consume_active_item(ctx.author.id, "golden_chip")
+                    await consume_inventory_item(ctx.author.id, "golden_chip")
+                
+                # Check for Double Down Card (doubles profit including chip bonus!)
                 has_double = await has_active_item(ctx.author.id, "double_down")
                 double_bonus = 0
                 if has_double > 0:
@@ -215,15 +301,28 @@ class Wheel(commands.Cog):
                     await consume_active_item(ctx.author.id, "double_down")
                     await consume_inventory_item(ctx.author.id, "double_down")
                 
+                net_profit = payout - bet_amount
                 color = 0xF1C40F
-                result_text = f"<a:Trophy:1438199339586424925> **{result_segment}!!!**\nYou won {payout:,} <:mora:1437958309255577681>!\nNet profit: +{payout - bet_amount:,} <:mora:1437958309255577681>"
+                result_text = f"You landed on {result_segment} and won {payout:,} <:mora:1437958309255577681>!"
+                if chip_bonus > 0:
+                    result_text += f" (+{chip_bonus:,} chip bonus)"
                 if double_bonus > 0:
-                    result_text += f"\n💳 **DOUBLE DOWN!** +{double_bonus:,} bonus!"
+                    result_text += f" (+{double_bonus:,} double down)"
             else:
                 payout = int(bet_amount * multiplier)
                 
-                # Check for Double Down Card (must be activated first, only on profit)
+                # Check for Golden Chip bonus (adds +30% to profit)
                 from utils.database import has_active_item, consume_active_item, consume_inventory_item
+                has_chip = await has_active_item(ctx.author.id, "golden_chip")
+                chip_bonus = 0
+                if has_chip > 0 and payout > bet_amount:  # Only on profit
+                    profit = payout - bet_amount
+                    chip_bonus = int(profit * 0.3)
+                    payout += chip_bonus
+                    await consume_active_item(ctx.author.id, "golden_chip")
+                    await consume_inventory_item(ctx.author.id, "golden_chip")
+                
+                # Check for Double Down Card (doubles profit including chip bonus!)
                 has_double = await has_active_item(ctx.author.id, "double_down")
                 double_bonus = 0
                 if has_double > 0 and payout > bet_amount:  # Only on profit
@@ -233,10 +332,13 @@ class Wheel(commands.Cog):
                     await consume_active_item(ctx.author.id, "double_down")
                     await consume_inventory_item(ctx.author.id, "double_down")
                 
+                net_profit = payout - bet_amount
                 color = 0x2ECC71
-                result_text = f"You landed on {result_segment} and won {payout:,} <:mora:1437958309255577681>!\nNet profit: +{payout - bet_amount:,} <:mora:1437958309255577681>"
+                result_text = f"You landed on {result_segment} and won {payout:,} <:mora:1437958309255577681>!"
+                if chip_bonus > 0:
+                    result_text += f" (+{chip_bonus:,} chip bonus)"
                 if double_bonus > 0:
-                    result_text += f"\n💳 **DOUBLE DOWN!** +{double_bonus:,} bonus!"
+                    result_text += f" (+{double_bonus:,} double down)"
 
             if payout > 0:
                 data = await get_user_data(ctx.author.id)
@@ -259,13 +361,13 @@ class Wheel(commands.Cog):
             )
             embed.add_field(
                 name="Bet",
-                value=f"{bet_amount:,} <:mora:1437958309255577681>",
+                value=f"{bet_amount:,}",
                 inline=True,
             )
-            embed.add_field(name="Multiplier", value=f"{multiplier}x", inline=True)
-
-            embed.set_footer(
-                text="Outcomes: Bankrupt (1%) | 0.2x (20%) | 0.5x (24%) | 1.2x (20%) | 2x (24%) | 5x (6%) | 10x (4%) | JACKPOT (1%)"
+            embed.add_field(
+                name="Net Profit",
+                value=f"{net_profit:+,}",
+                inline=True,
             )
 
             try:

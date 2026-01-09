@@ -249,6 +249,31 @@ class Daily(commands.Cog):
                 """,
                     (ctx.author.id, now.isoformat(), display_streak),
                 )
+                
+                # Grant +2 fishing energy
+                from utils.database import add_fishing_energy
+                await add_fishing_energy(ctx.author.id, 2, is_premium)
+                
+                # Give 0-2 regular chests with streak-based odds
+                # Base: 50% for first chest, 30% for second chest
+                # Each streak day adds +2% to both chances (max +40% at 20 streak)
+                streak_bonus_chest = min(display_streak * 2, 40)
+                first_chest_chance = 0.50 + (streak_bonus_chest / 100)
+                second_chest_chance = 0.30 + (streak_bonus_chest / 100)
+                
+                chest_count = 0
+                if random.random() < first_chest_chance:
+                    chest_count += 1
+                    if random.random() < second_chest_chance:
+                        chest_count += 1
+                
+                if chest_count > 0:
+                    await db.execute("""
+                        INSERT INTO inventory (user_id, item_id, quantity)
+                        VALUES (?, 'regular_chest', ?)
+                        ON CONFLICT(user_id, item_id) DO UPDATE SET
+                            quantity = quantity + ?
+                    """, (ctx.author.id, chest_count, chest_count))
 
                 await db.commit()
 
@@ -290,22 +315,19 @@ class Daily(commands.Cog):
 
                     await db.commit()
 
-            # Build header text
-            header_text = f"Current Streak: {display_streak} day{'s' if display_streak != 1 else ''} - Come back in 24 hours!\n\n"
+            # Build achievement header if earned
+            achievement_header = ""
             if achievements_earned:
                 from utils.achievements import get_achievement_meta
-
                 ach_title = get_achievement_meta(achievements_earned[0]).get(
                     "title", "Achievement"
                 )
-                header_text = f"🏆 Achievement Unlocked: {ach_title}!\n" + header_text
-
-            header_text += (
-                "<a:Check:1437951818452832318> You've claimed your daily rewards!"
-            )
+                achievement_header = f"🏆 Achievement Unlocked: {ach_title}!\n\n"
 
             embed = discord.Embed(
-                title="Daily Rewards Claimed!", description=header_text, color=0x2ECC71
+                title="Daily Rewards Claimed!",
+                description=f"{achievement_header}**Rewards:**",
+                color=0x2ECC71
             )
 
             embed.set_author(
@@ -313,23 +335,34 @@ class Daily(commands.Cog):
             )
             embed.set_thumbnail(url=ctx.author.display_avatar.url)
 
-            rewards_text = f"<:mora:1437958309255577681> {mora_reward:,} Mora"
+            # Rewards section
+            rewards_text = f"<:mora:1437958309255577681> Mora: {mora_reward:,}"
             if is_premium:
                 rewards_text += " (3x Premium)"
-
+            if chest_count > 0:
+                rewards_text += f"\n<:regular:1437473086571286699> Regular Chest: {chest_count}x"
+            rewards_text += "\n<:energy:1459189042574004224> Fishing Energy: +2"
+            
             embed.add_field(
-                name="<:gem1_72x72:1437942609849876680> Bundle Rewards",
+                name="\u200b",
                 value=rewards_text,
                 inline=False,
             )
 
-            # Show bonuses
-            bonus_text = f"**Level {user_level}:** +{level_bonus:,} <:mora:1437958309255577681>\n"
+            # Bonuses section
+            bonus_lines = []
+            bonus_lines.append(f"Level {user_level}: {level_bonus:,} <:mora:1437958309255577681>")
             if display_streak > 1:
-                streak_bonus_percent = min(display_streak * 5, 50)
-                bonus_text += f"**Streak Bonus: +{streak_bonus_percent}%**"
+                streak_mora = int((base_mora + level_bonus) * (streak_bonus_percent / 100))
+                if is_premium:
+                    streak_mora *= 3
+                bonus_lines.append(f"Streak x{display_streak}: {streak_mora:,} <:mora:1437958309255577681>")
             
-            embed.add_field(name="Bonuses", value=bonus_text, inline=False)
+            embed.add_field(
+                name="Bonuses",
+                value="\n".join(bonus_lines),
+                inline=False
+            )
 
             embed.set_image(
                 url="https://cdn.discordapp.com/attachments/1014919079154425917/1020348943902711868/gw_divider.png?ex=6914a181&is=69135001&hm=097a7ed105cff61e7dec6a9f894f9a27ead6950a765de7d50b0970c6e0586b09&"
@@ -349,14 +382,14 @@ class Daily(commands.Cog):
             from utils.logger import setup_logger
 
             logger = setup_logger("Daily")
-            logger.error(f"Error in bundle daily command: {e}", exc_info=True)
+            logger.error(f"Error in bundle command: {e}", exc_info=True)
             await ctx.send(
-                "❌ Something went wrong while claiming your bundle daily rewards. Please try again in a moment."
+                "❌ Something went wrong while claiming your bundle rewards. Please try again in a moment."
             )
 
     @commands.command(name="bundle", aliases=["bd"])
     async def premium_daily(self, ctx):
-        """Claim bundle daily rewards - Enhanced rewards for premium members!"""
+        """Claim bundle rewards (every 12 hours) - Enhanced rewards for premium members!"""
         try:
             if not await require_enrollment(ctx):
                 return
@@ -404,14 +437,14 @@ class Daily(commands.Cog):
                     last_claim = datetime.fromisoformat(last_claim_str)
                     time_diff = now - last_claim
 
-                    if time_diff < timedelta(hours=24):
-                        time_left = timedelta(hours=24) - time_diff
+                    if time_diff < timedelta(hours=12):
+                        time_left = timedelta(hours=12) - time_diff
                         hours = int(time_left.total_seconds() // 3600)
                         minutes = int((time_left.total_seconds() % 3600) // 60)
 
                         embed = discord.Embed(
-                            title="� Bundle Daily Rewards",
-                            description=f"<a:X_:1437951830393884788> You've already claimed your bundle daily rewards!\n\nCome back in **{hours}h {minutes}m**",
+                            title="<:bundle>1458318375590822068: Bundle Rewards",
+                            description=f"<a:X_:1437951830393884788> You've already claimed your bundle rewards!\n\nCome back in **{hours}h {minutes}m**",
                             color=0xE74C3C,
                         )
                         embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
@@ -421,7 +454,7 @@ class Daily(commands.Cog):
                         )
                         return await send_embed(ctx, embed)
 
-                    if time_diff <= timedelta(hours=48):
+                    if time_diff <= timedelta(hours=24):
                         streak += 1
                     else:
                         streak = 1
@@ -461,11 +494,14 @@ class Daily(commands.Cog):
                     (ctx.author.id, now.isoformat(), display_streak),
                 )
                 
+                # Grant +1 fishing energy
+                from utils.database import add_fishing_energy
+                await add_fishing_energy(ctx.author.id, 1, True)  # is_premium = True
+                
                 # Give random item (weighted)
                 random_items = [
                     "lucky_dice", "streak", "shield", "lockpick",
-                    "lucky_dice", "streak", "shield", "lockpick",  # Double weight for common items
-                    "lucky_clover"  # Rare
+                    "lucky_dice", "streak", "shield", "lockpick"  # Double weight for common items
                 ]
                 random_item = random.choice(random_items)
                 
@@ -492,27 +528,34 @@ class Daily(commands.Cog):
                 await db.commit()
 
             # Build header text
-            header_text = f"Current Streak: {display_streak} day{'s' if display_streak != 1 else ''} - Come back in 12 hours!\n\n"
-            header_text += (
-                "<a:Check:1437951818452832318> You've claimed your bundle daily rewards!"
-            )
+            header_text = f"**Streak:** {display_streak} - Next claim in 12 hours\n\n**Rewards:**"
 
             embed = discord.Embed(
-                title="<:bundle:1458318375590822068> Bundle Daily Claimed!", description=header_text, color=0xFFD700
+                title="Bundle Claimed!", 
+                description=header_text, 
+                color=0xFFD700
             )
 
             embed.set_author(
                 name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url
             )
-            embed.set_thumbnail(url=ctx.author.display_avatar.url)
+            
+            # Set bundle emoji as thumbnail
+            import re
+            bundle_emoji = "<:bundle:1458318375590822068>"
+            match = re.match(r'<(a?):[^:]+:(\d+)>', bundle_emoji)
+            if match:
+                animated, emoji_id = match.groups()
+                ext = 'gif' if animated else 'png'
+                emoji_url = f'https://cdn.discordapp.com/emojis/{emoji_id}.{ext}'
+                embed.set_thumbnail(url=emoji_url)
 
-            # Item name mapping
+            # Item name mapping (removed lucky_clover)
             item_names = {
                 "lucky_dice": "<:dice:1457965149137670186> Lucky Dice",
                 "streak": "<:streak:1457966635838214247> Hot Streak Card",
                 "shield": "<:shield:1437977751897526303> Shield",
-                "lockpick": "<:lockpick:1437977751826087978> Lockpick",
-                "lucky_clover": "<:lucky_clover:1437977751830417510> Lucky Clover"
+                "lockpick": "<:lock:1437977751826087978> Lockpick"
             }
 
             # Chest emoji mapping
@@ -525,35 +568,40 @@ class Daily(commands.Cog):
             # Build chest display - stack duplicates
             from collections import Counter
             chest_counts = Counter(awarded_chests)
-            chest_names = []
+            chest_lines = []
             for chest_type, count in chest_counts.items():
                 emoji = chest_emojis.get(chest_type, "")
                 name = chest_type.capitalize()
                 if count > 1:
-                    chest_names.append(f"{emoji} {name} x{count}")
+                    chest_lines.append(f"{emoji} {name} Chest: {count}x")
                 else:
-                    chest_names.append(f"{emoji} {name}")
-            chest_display = "\n".join(chest_names)
+                    chest_lines.append(f"{emoji} {name} Chest: 1x")
 
-            rewards_text = (
-                f"<:mora:1437958309255577681> {mora_reward:,} Mora\n"
-                f"{item_names.get(random_item, random_item)} x1\n"
-                f"{chest_display}"
-            )
-
-            embed.add_field(
-                name="<:gem1_72x72:1437942609849876680> Bundle Rewards",
-                value=rewards_text,
-                inline=False,
-            )
-
-            # Show bonuses
-            bonus_text = f"**Level {user_level}:** +{level_bonus:,} <:mora:1437958309255577681>\n"
-            if display_streak > 1:
-                streak_bonus_percent = min(display_streak * 5, 50)
-                bonus_text += f"**Streak Bonus: +{streak_bonus_percent}%**"
+            # Organized rewards display
+            rewards_lines = []
+            for line in chest_lines:
+                rewards_lines.append(line)
+            rewards_lines.append(item_names.get(random_item, random_item) + ": 1x")
+            rewards_lines.append("<:energy:1459189042574004224> Fishing Energy: +1")
             
-            embed.add_field(name="Bonuses", value=bonus_text, inline=False)
+            embed.add_field(
+                name="\u200b",
+                value="\n".join(rewards_lines),
+                inline=False
+            )
+            
+            # Bonuses section
+            bonus_lines = []
+            bonus_lines.append(f"Level {user_level}: {level_bonus:,} <:mora:1437958309255577681>")
+            if display_streak > 1:
+                streak_mora = int((base_mora + level_bonus) * (streak_bonus_percent / 100))
+                bonus_lines.append(f"Streak {display_streak}: {streak_mora:,} <:mora:1437958309255577681>")
+            
+            embed.add_field(
+                name="Bonuses",
+                value="\n".join(bonus_lines),
+                inline=False
+            )
 
             embed.set_image(
                 url="https://cdn.discordapp.com/attachments/1014919079154425917/1020348943902711868/gw_divider.png?ex=6914a181&is=69135001&hm=097a7ed105cff61e7dec6a9f894f9a27ead6950a765de7d50b0970c6e0586b09&"
@@ -565,9 +613,9 @@ class Daily(commands.Cog):
             from utils.logger import setup_logger
 
             logger = setup_logger("Daily")
-            logger.error(f"Error in bundle daily command: {e}", exc_info=True)
+            logger.error(f"Error in bundle command: {e}", exc_info=True)
             await ctx.send(
-                "❌ Something went wrong while claiming your bundle daily rewards. Please try again in a moment."
+                "❌ Something went wrong while claiming your bundle rewards. Please try again in a moment."
             )
 
     @commands.command(name="resetdaily")
@@ -578,8 +626,9 @@ class Daily(commands.Cog):
 
         try:
             async with aiosqlite.connect(DB_PATH) as db:
+                # Only delete regular daily claims, NOT premium bundle claims
                 await db.execute(
-                    "DELETE FROM daily_claims WHERE user_id = ?", (ctx.author.id,)
+                    "DELETE FROM daily_claims WHERE user_id = ? AND (claim_type = 'regular' OR claim_type IS NULL)", (ctx.author.id,)
                 )
                 await db.commit()
 
@@ -601,13 +650,14 @@ class Daily(commands.Cog):
 
         try:
             async with aiosqlite.connect(DB_PATH) as db:
+                # Only delete premium bundle claims, NOT regular daily claims
                 await db.execute(
                     "DELETE FROM daily_claims WHERE user_id = ? AND claim_type = 'premium'", (ctx.author.id,)
                 )
                 await db.commit()
 
             await ctx.send(
-                "<a:Check:1437951818452832318> Bundle cooldown reset! You can claim again."
+                "<a:Check:1437951818452832318> Cooldown successfully reset."
             )
         except Exception as e:
             from utils.logger import setup_logger

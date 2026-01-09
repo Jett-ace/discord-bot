@@ -38,10 +38,15 @@ class Slots(commands.Cog):
             premium_cog = self.bot.get_cog('Premium')
             is_premium = False
             if premium_cog:
-                is_premium = await premium_cog.is_premium(ctx.author.id)
+                try:
+                    is_premium = await premium_cog.is_premium(ctx.author.id)
+                    print(f"[SLOTS] User {ctx.author.id} premium status: {is_premium}")
+                except Exception:
+                    is_premium = False
             
             # Premium: 1M, Normal: 200K, Unlimited: No limit
             MAX_BET = 1_000_000 if is_premium else 200_000
+            print(f"[SLOTS] User {ctx.author.id} MAX_BET set to: {MAX_BET:,}")
             if unlimited:
                 MAX_BET = float('inf')
 
@@ -119,13 +124,37 @@ class Slots(commands.Cog):
             reel2 = random.choice(symbol_pool)
             reel3 = random.choice(symbol_pool)
             
+            # Check for lucky items for luck bonuses
+            from utils.database import has_active_item, consume_active_item
+            has_dice = await has_active_item(ctx.author.id, "lucky_dice")
+            has_horseshoe = await has_active_item(ctx.author.id, "lucky_horseshoe")
+            
+            # Calculate luck bonus (items don't stack - use best one only)
+            luck_bonus = 0
+            luck_item_used = None
+            if has_horseshoe > 0:
+                luck_bonus = 0.05  # +5% from lucky horseshoe (higher priority)
+                luck_item_used = "horseshoe"
+            elif has_dice > 0:
+                luck_bonus = 0.03  # +3% from lucky dice
+                luck_item_used = "dice"
+            
             # Premium users get 10% chance to force a matching reel
-            if is_premium and not (reel1 == reel2 == reel3):
-                if random.random() < 0.10:
+            force_win_chance = 0.10 if is_premium else 0
+            force_win_chance += luck_bonus  # Add luck bonuses
+            
+            if not (reel1 == reel2 == reel3) and force_win_chance > 0:
+                if random.random() < force_win_chance:
                     # Force a match (pick the most valuable symbol of the three)
                     symbol_values = {"7️⃣": 6, "💎": 5, "🍇": 4, "🍊": 3, "🍋": 2, "🍒": 1}
                     best_symbol = max([reel1, reel2, reel3], key=lambda s: symbol_values.get(s, 0))
                     reel1 = reel2 = reel3 = best_symbol
+                    
+                    # Consume the luck item that was used
+                    if luck_item_used == "horseshoe":
+                        await consume_active_item(ctx.author.id, "lucky_horseshoe")
+                    elif luck_item_used == "dice":
+                        await consume_active_item(ctx.author.id, "lucky_dice")
 
             # Check for win
             payout_multipliers = {
@@ -142,15 +171,25 @@ class Slots(commands.Cog):
                 multiplier = payout_multipliers.get(reel1, 2)
                 payout = bet_amount * multiplier
                 
-                # Check for Double Down Card (must be activated first)
+                # Check for Golden Chip bonus (adds +30% to profit)
                 from utils.database import has_active_item, consume_active_item, consume_inventory_item
+                has_chip = await has_active_item(ctx.author.id, "golden_chip")
+                chip_bonus = 0
+                if has_chip > 0:
+                    profit = payout - bet_amount
+                    chip_bonus = int(profit * 0.3)
+                    payout += chip_bonus
+                    await consume_active_item(ctx.author.id, "golden_chip")
+                    await consume_inventory_item(ctx.author.id, "golden_chip")
+                
+                # Check for Double Down Card (doubles ENTIRE payout including chip bonus!)
                 has_double = await has_active_item(ctx.author.id, "double_down")
-                double_active = False
+                double_bonus = 0
                 if has_double > 0:
-                    payout *= 2  # Double the entire payout
+                    double_bonus = payout  # Double the entire payout
+                    payout += double_bonus
                     await consume_active_item(ctx.author.id, "double_down")
                     await consume_inventory_item(ctx.author.id, "double_down")
-                    double_active = True
                 
                 # Get current mora and add payout
                 data = await get_user_data(ctx.author.id)
@@ -188,16 +227,22 @@ class Slots(commands.Cog):
                 )
                 embed.description = f"**[ {reel1} | {reel2} | {reel3} ]**"
 
+                bonus_text = ""
+                if chip_bonus > 0:
+                    bonus_text += f" <:goldenchip:1457964285207646264> +{chip_bonus:,}"
+                if double_bonus > 0:
+                    bonus_text += f" 💳 x2 +{double_bonus:,}"
+                
                 if reel1 == "7️⃣":
                     embed.add_field(
                         name="🎉 JACKPOT!",
-                        value=f"Won {payout:,} <:mora:1437958309255577681> ({multiplier}x{'x2 DOUBLE DOWN!' if double_active else ''})",
+                        value=f"Won {payout:,} <:mora:1437958309255577681> ({multiplier}x{bonus_text})",
                         inline=False,
                     )
                 else:
                     embed.add_field(
                         name="🎉 Winner!",
-                        value=f"Won {payout:,} <:mora:1437958309255577681> ({multiplier}x{'x2 DOUBLE DOWN!' if double_active else ''})",
+                        value=f"Won {payout:,} <:mora:1437958309255577681> ({multiplier}x{bonus_text})",
                         inline=False,
                     )
 

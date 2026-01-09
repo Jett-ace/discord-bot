@@ -157,16 +157,28 @@ async def init_db():
             user_id INTEGER PRIMARY KEY,
             exp INTEGER DEFAULT 0,
             level INTEGER DEFAULT 0,
-            rod_level INTEGER DEFAULT 1
+            rod_level INTEGER DEFAULT 1,
+            rod_tier INTEGER DEFAULT 0,
+            rod_durability INTEGER DEFAULT 0,
+            fishing_energy INTEGER DEFAULT 6,
+            last_energy_regen TEXT
         )""")
-        # Migrate existing accounts to have rod_level if they don't
+        # Migrate existing accounts to have new columns if they don't
         try:
             async with db.execute("PRAGMA table_info('accounts')") as cursor:
                 cols = await cursor.fetchall()
                 col_names = [c[1] for c in cols]
                 if 'rod_level' not in col_names:
                     await db.execute("ALTER TABLE accounts ADD COLUMN rod_level INTEGER DEFAULT 1")
-                    await db.commit()
+                if 'rod_tier' not in col_names:
+                    await db.execute("ALTER TABLE accounts ADD COLUMN rod_tier INTEGER DEFAULT 0")
+                if 'rod_durability' not in col_names:
+                    await db.execute("ALTER TABLE accounts ADD COLUMN rod_durability INTEGER DEFAULT 0")
+                if 'fishing_energy' not in col_names:
+                    await db.execute("ALTER TABLE accounts ADD COLUMN fishing_energy INTEGER DEFAULT 6")
+                if 'last_energy_regen' not in col_names:
+                    await db.execute("ALTER TABLE accounts ADD COLUMN last_energy_regen TEXT")
+                await db.commit()
         except Exception:
             pass
         # Track which level rewards a user has claimed (prevents double-granting)
@@ -177,13 +189,20 @@ async def init_db():
             claimed INTEGER DEFAULT 0,
             PRIMARY KEY (user_id, level)
         )""")
-        # Simple badges table for stage completion and other honors
+        # Badges table
         await db.execute("""
         CREATE TABLE IF NOT EXISTS badges (
             user_id INTEGER,
             badge_key TEXT,
             awarded_at TIMESTAMP,
             PRIMARY KEY (user_id, badge_key)
+        )""")
+        # Maintenance whitelist table
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS maintenance_whitelist (
+            user_id INTEGER PRIMARY KEY,
+            added_at TIMESTAMP,
+            added_by INTEGER
         )""")
         # Achievements table
         await db.execute("""
@@ -897,12 +916,31 @@ async def add_account_exp(user_id: int, exp_amount: int):
     
     Args:
         user_id: Discord user ID
-        exp_amount: Amount of EXP to add
+        exp_amount: Amount of EXP to add (automatically applies Lavender Koi 5% boost if equipped)
     
     Returns:
         Tuple of (leveled_up: bool, new_level: int, old_level: int)
     """
     await ensure_user_db(user_id)
+    
+    # Check for Lavender Koi passive (5% XP boost to ALL XP)
+    xp_multiplier = 1.0
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("""
+                SELECT fish_id FROM equipped_fish WHERE user_id = ?
+            """, (user_id,))
+            equipped_fish = await cursor.fetchall()
+            
+            for (fish_id,) in equipped_fish:
+                if fish_id == "lavender_koi":
+                    xp_multiplier = 1.05
+                    break
+    except Exception:
+        pass
+    
+    # Apply Lavender Koi bonus
+    exp_amount = int(exp_amount * xp_multiplier)
     
     async with aiosqlite.connect(DB_PATH) as db:
         # Get current level and exp
@@ -1845,3 +1883,170 @@ async def has_lucky_clover(user_id):
         return True
 
         return datetime.now() < expiry
+
+
+async def get_gambling_bonus(user_id):
+    """Get user's gambling winnings bonus from equipped fish (Dune: +3%)
+    
+    Returns:
+        float: Multiplier to apply to gambling winnings (e.g., 1.03 for +3%)
+    """
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("""
+                SELECT fish_id FROM equipped_fish WHERE user_id = ?
+            """, (user_id,))
+            equipped_fish = await cursor.fetchall()
+            
+            for (fish_id,) in equipped_fish:
+                if fish_id == "dune":
+                    return 1.03  # +3% winnings
+            
+        return 1.0  # No bonus
+    except Exception:
+        return 1.0
+
+
+async def get_fishing_energy(user_id: int, is_premium: bool = False):
+    """Get user's current fishing energy with automatic regeneration
+    
+    Args:
+        user_id: Discord user ID
+        is_premium: Whether user has premium (affects max capacity and regen rate)
+    
+    Returns:
+        int: Current fishing energy (0-6 for normal, 0-9 for premium)
+    """
+    await ensure_user_db(user_id)
+    from datetime import datetime, timedelta
+    
+    max_energy = 9 if is_premium else 6
+    regen_minutes = 30 if is_premium else 60
+    
+    # Check if Lola is equipped (reduces regen time to 50 minutes for non-premium)
+    if not is_premium:
+        try:
+            async with aiosqlite.connect(DB_PATH) as db:
+                cursor = await db.execute(
+                    "SELECT fish_id FROM equipped_fish WHERE user_id = ?",
+                    (user_id,)
+                )
+                equipped_fish = await cursor.fetchall()
+                for (fish_id,) in equipped_fish:
+                    if fish_id == "lola":
+                        regen_minutes = 50
+                        break
+        except Exception:
+            pass
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT fishing_energy, last_energy_regen FROM accounts WHERE user_id = ?",
+            (user_id,)
+        )
+        result = await cursor.fetchone()
+        
+        if not result:
+            return max_energy
+        
+        current_energy = result[0] if result[0] is not None else max_energy
+        last_regen = result[1]
+        
+        # If at max, no need to regenerate
+        if current_energy >= max_energy:
+            return max_energy
+        
+        # Calculate energy to regenerate
+        if last_regen:
+            last_regen_time = datetime.fromisoformat(last_regen)
+            now = datetime.utcnow()
+            time_passed = (now - last_regen_time).total_seconds() / 60  # in minutes
+            
+            energy_to_add = int(time_passed // regen_minutes)
+            
+            if energy_to_add > 0:
+                new_energy = min(current_energy + energy_to_add, max_energy)
+                new_regen_time = last_regen_time + timedelta(minutes=energy_to_add * regen_minutes)
+                
+                await db.execute(
+                    "UPDATE accounts SET fishing_energy = ?, last_energy_regen = ? WHERE user_id = ?",
+                    (new_energy, new_regen_time.isoformat(), user_id)
+                )
+                await db.commit()
+                return new_energy
+        else:
+            # First time, set last_regen to now
+            await db.execute(
+                "UPDATE accounts SET last_energy_regen = ? WHERE user_id = ?",
+                (datetime.utcnow().isoformat(), user_id)
+            )
+            await db.commit()
+        
+        return current_energy
+
+
+async def consume_fishing_energy(user_id: int, amount: int):
+    """Consume fishing energy
+    
+    Args:
+        user_id: Discord user ID
+        amount: Energy to consume
+    
+    Returns:
+        bool: True if successful, False if not enough energy
+    """
+    await ensure_user_db(user_id)
+    from datetime import datetime
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT fishing_energy FROM accounts WHERE user_id = ?",
+            (user_id,)
+        )
+        result = await cursor.fetchone()
+        
+        if not result:
+            return False
+        
+        current_energy = result[0] if result[0] is not None else 6
+        
+        if current_energy < amount:
+            return False
+        
+        new_energy = current_energy - amount
+        
+        await db.execute(
+            "UPDATE accounts SET fishing_energy = ?, last_energy_regen = ? WHERE user_id = ?",
+            (new_energy, datetime.utcnow().isoformat(), user_id)
+        )
+        await db.commit()
+        return True
+
+
+async def add_fishing_energy(user_id: int, amount: int, is_premium: bool = False):
+    """Add fishing energy (e.g., from daily rewards)
+    
+    Args:
+        user_id: Discord user ID
+        amount: Energy to add
+        is_premium: Whether user has premium (affects max capacity)
+    """
+    await ensure_user_db(user_id)
+    
+    max_energy = 9 if is_premium else 6
+    
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT fishing_energy FROM accounts WHERE user_id = ?",
+            (user_id,)
+        )
+        result = await cursor.fetchone()
+        
+        current_energy = result[0] if result and result[0] is not None else max_energy
+        new_energy = min(current_energy + amount, max_energy)
+        
+        await db.execute(
+            "UPDATE accounts SET fishing_energy = ? WHERE user_id = ?",
+            (new_energy, user_id)
+        )
+        await db.commit()

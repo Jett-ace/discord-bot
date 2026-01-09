@@ -16,7 +16,7 @@ ITEMS = {
         "emoji": "<:dice:1457965149137670186>",
         "rarity": "Uncommon",
         "base_price": 350000,
-        "description": "+5% win chance on coinflip, dice, rps for next 10 games",
+        "description": "+3% win chance on ALL gambling games for next 10 games (doesn't stack with other luck items)",
         "type": "consumable",
         "duration": "10 games or 24 hours",
         "stackable": False,
@@ -28,7 +28,7 @@ ITEMS = {
         "emoji": "<:goldenchip:1457964285207646264>",
         "rarity": "Rare",
         "base_price": 800000,
-        "description": "Next winning bet gets +0.3x multiplier bonus",
+        "description": "Next winning bet gets +30% profit bonus",
         "type": "consumable",
         "duration": "Single use (next win)",
         "stackable": True,
@@ -138,11 +138,11 @@ ITEMS = {
         "source": "Black Market (Limited Stock)"
     },
     "plasma_canon": {
-        "name": "Plasma Canon",
+        "name": "Plasma Cannon",
         "aliases": ["plasma", "canon", "cannon"],
         "emoji": "<:plasmacanon:1457975521521434624>",
         "rarity": "Mythic",
-        "base_price": 15000000,
+        "base_price": 45000000,
         "description": "Offensive weapon - Fire at target to extract 6% from wallet + 15% from bank, bypasses all defenses",
         "type": "consumable",
         "duration": "Single use with grob",
@@ -163,6 +163,33 @@ ITEMS = {
         "max_stack": 5,
         "source": "Black Market"
     },
+    "lucky_clover": {
+        "name": "Lucky Clover",
+        "aliases": ["clover"],
+        "emoji": "<a:lucky_clover:1459167567154512065>",
+        "rarity": "Rare",
+        "base_price": 450000,
+        "description": "Increases luck in all games by +3% for 30 minutes",
+        "type": "consumable",
+        "duration": "30 minutes",
+        "stackable": True,
+        "max_stack": 5,
+        "source": "Black Market, Bundle Rewards"
+    },
+    "battery": {
+        "name": "Battery",
+        "aliases": ["bat"],
+        "emoji": "<:battery:1459191867081101392>",
+        "rarity": "Epic",
+        "base_price": 250000,
+        "stock": 2,
+        "description": "Instantly refills all fishing energy",
+        "type": "consumable",
+        "duration": "Instant",
+        "stackable": True,
+        "max_stack": 3,
+        "source": "Black Market, Special Crate"
+    },
     "bank_upgrade": {
         "name": "Bank Upgrade",
         "aliases": ["upgrade", "bank up"],
@@ -179,7 +206,7 @@ ITEMS = {
     "shotgun": {
         "name": "Shotgun",
         "aliases": ["gun", "shot"],
-        "emoji": "🔫",
+        "emoji": "<:shotgun:1458773713418977364>",
         "rarity": "Uncommon",
         "base_price": 250000,
         "description": "+20% robbery success rate",
@@ -197,6 +224,19 @@ ITEMS = {
         "description": "Mask + Night Vision + Lockpicker - +25% success with full set",
         "type": "consumable",
         "duration": "Single use (each item)",
+        "stackable": True,
+        "max_stack": 5,
+        "source": "Black Market"
+    },
+    "ninjapack": {
+        "name": "Ninja Pack",
+        "aliases": ["ninja", "np"],
+        "emoji": "<:ninja:1458503378450780408>",
+        "rarity": "Epic",
+        "base_price": 1000000,
+        "description": "+30% robbery success rate + robs anonymously (victim doesn't know)",
+        "type": "consumable",
+        "duration": "Single use",
         "stackable": True,
         "max_stack": 5,
         "source": "Black Market"
@@ -282,12 +322,116 @@ ITEMS = {
         "aliases": ["horseshoe", "lucky", "shoe"],
         "emoji": "<:luckyhorseshoe:1458353830704975884>",
         "rarity": "Mythic",
-        "base_price": 45000000,
-        "description": "+10% win chance on ALL gambling games",
+        "base_price": 30000000,
+        "description": "+5% win chance on ALL gambling games for 4 hours (doesn't stack with other luck items)",
         "type": "consumable",
         "duration": "4 hours",
         "stackable": False,
         "source": "Black Market"
+    },
+    "string": {
+        "name": "String",
+        "aliases": ["str"],
+        "emoji": "<:string:1459002611217989702>",
+        "rarity": "Common",
+        "base_price": 150000,
+        "description": "Crafting material for fishing rods",
+        "type": "material",
+        "duration": "Permanent",
+        "stackable": True,
+        "max_stack": 99,
+        "source": "Black Market"
+    },
+    "wood": {
+        "name": "Wood",
+        "aliases": ["wooden", "logs"],
+        "emoji": "<:logs:1459003610212995285>",
+        "rarity": "Common",
+        "base_price": 75000,
+        "description": "Crafting material for fishing rods and repairs",
+        "type": "material",
+        "duration": "Permanent",
+        "stackable": True,
+        "max_stack": 99,
+        "source": "Black Market"
+    },
+    "wormbait": {
+        "name": "Wormbait",
+        "aliases": ["worm", "bait"],
+        "emoji": "<:wormbait:1458986452871282698>",
+        "rarity": "Common",
+        "base_price": 70000,
+        "description": "Required for fishing. Consumed on each cast.",
+        "type": "consumable",
+        "duration": "Single use",
+        "stackable": True,
+        "max_stack": 99,
+        "source": "Black Market, Chests, Fishing"
+    },
+    "scorpion": {
+        "name": "Scorpion",
+        "aliases": ["scorp"],
+        "emoji": "<:scorpion:1458986549722087586>",
+        "rarity": "Uncommon",
+        "base_price": 100000,
+        "description": "Premium bait for fishing. Consumed on each cast.",
+        "type": "consumable",
+        "duration": "Single use",
+        "stackable": True,
+        "max_stack": 99,
+        "source": "Black Market, Chests, Fishing"
+    },
+    "fishing_template": {
+        "name": "Fishing Template",
+        "aliases": ["template", "ft"],
+        "emoji": "🎣",
+        "rarity": "Epic",
+        "base_price": 1200000,
+        "description": "Required to upgrade fishing rods",
+        "type": "material",
+        "duration": "Permanent",
+        "stackable": True,
+        "max_stack": 10,
+        "source": "Black Market, Fishing"
+    },
+    "tideshells": {
+        "name": "TideShells",
+        "aliases": ["tide", "shells", "shell"],
+        "emoji": "<:TideShells:1459005927389663445>",
+        "rarity": "Uncommon",
+        "base_price": None,  # Not purchasable
+        "description": "Rare shells found while fishing. Required for rod upgrades.",
+        "type": "material",
+        "duration": "Permanent",
+        "stackable": True,
+        "max_stack": 99,
+        "source": "Fishing (All areas)"
+    },
+    "silver_scrap": {
+        "name": "Silver Scrap",
+        "aliases": ["silver", "sscrap"],
+        "emoji": "<:silverscrap:1459002718810279957>",
+        "rarity": "Rare",
+        "base_price": None,  # Not purchasable
+        "description": "Used to upgrade and repair Silver Fishing Rods",
+        "type": "material",
+        "duration": "Permanent",
+        "stackable": True,
+        "max_stack": 99,
+        "source": "Fishing (Silverfin+)"
+    },
+    "gold_scrap": {
+        "name": "Gold Scrap",
+        "aliases": ["gold", "gscrap"],
+        "emoji": "<:goldscrap:1459002663193546846>",
+        "rarity": "Epic",
+        "base_price": None,  # Not purchasable
+        "description": "Used to upgrade and repair Golden Fishing Rods",
+        "type": "material",
+        "duration": "Permanent",
+        "stackable": True,
+        "max_stack": 99,
+        "source": "Fishing (Azure+)"
     }
 }
 
@@ -606,12 +750,25 @@ class BlackMarket(commands.Cog):
         if is_premium:
             discount_msg = "\n✨ **15% Premium discount applied**"
         
+        # Helper to get emoji URL
+        import re
+        def get_emoji_url(emoji_str):
+            match = re.match(r'<(a?):[^:]+:(\d+)>', emoji_str)
+            if match:
+                animated, emoji_id = match.groups()
+                ext = 'gif' if animated else 'png'
+                return f'https://cdn.discordapp.com/emojis/{emoji_id}.{ext}'
+            return None
+        
         embed = discord.Embed(
             title="🎴 Purchase Successful!",
             description=f"You bought {quantity_text}{item['emoji']} **{item['name']}** for {total_price:,} <:mora:1437958309255577681>{discount_msg}\n\n**{stock-amount}** remaining in stock",
             color=RARITY_COLORS.get(item["rarity"], 0x2ECC71)
         )
         embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+        emoji_url = get_emoji_url(item['emoji'])
+        if emoji_url:
+            embed.set_thumbnail(url=emoji_url)
         embed.add_field(name="Effect", value=item["description"], inline=False)
         if amount > 1:
             embed.add_field(name="Quantity", value=f"{amount} items", inline=True)
@@ -716,25 +873,52 @@ class BlackMarket(commands.Cog):
         embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
 
         for listing_id, seller_id, item_id, price in listings:
-            if item_id not in ITEMS:
-                continue
-            
-            item = ITEMS[item_id]
-            try:
-                seller = await self.bot.fetch_user(seller_id)
-                seller_name = seller.display_name
-            except:
-                seller_name = f"User {seller_id}"
-            
-            value = f"{item['emoji']} **{item['name']}**\n"
-            value += f"└ Seller: {seller_name}\n"
-            value += f"└ Price: {price:,} <:mora:1437958309255577681>"
-            
-            embed.add_field(
-                name=f"Listing #{listing_id}",
-                value=value,
-                inline=False
-            )
+            # Check if it's a fish listing
+            if item_id.startswith("fish_"):
+                # Get fish data from fishing cog
+                fishing_cog = self.bot.get_cog('Fishing')
+                if not fishing_cog:
+                    continue
+                
+                from cogs.fishing import FISH
+                fish_id = item_id.replace("fish_", "")
+                
+                if fish_id not in FISH:
+                    continue
+                
+                fish = FISH[fish_id]
+                try:
+                    seller = await self.bot.fetch_user(seller_id)
+                    seller_name = seller.display_name
+                except:
+                    seller_name = f"User {seller_id}"
+                
+                value = f"🐟 {fish['emoji']} **{fish['name']}** ({fish['rarity']})\n"
+                value += f"└ Seller: {seller_name}\n"
+                value += f"└ Price: {price:,} <:mora:1437958309255577681>"
+                
+                embed.add_field(
+                    name=f"Listing #{listing_id}",
+                    value=value,
+                    inline=False
+                )
+            elif item_id in ITEMS:
+                item = ITEMS[item_id]
+                try:
+                    seller = await self.bot.fetch_user(seller_id)
+                    seller_name = seller.display_name
+                except:
+                    seller_name = f"User {seller_id}"
+                
+                value = f"{item['emoji']} **{item['name']}**\n"
+                value += f"└ Seller: {seller_name}\n"
+                value += f"└ Price: {price:,} <:mora:1437958309255577681>"
+                
+                embed.add_field(
+                    name=f"Listing #{listing_id}",
+                    value=value,
+                    inline=False
+                )
 
         embed.set_footer(text="Use 'gbl <id>' to purchase")
         await ctx.send(embed=embed)
@@ -769,6 +953,58 @@ class BlackMarket(commands.Cog):
             if mora < price:
                 return await ctx.send(f"<a:X_:1437951830393884788> You need {price:,} <:mora:1437958309255577681>. You have {mora:,}.")
 
+            # Check if it's a fish listing
+            if item_id.startswith("fish_"):
+                from cogs.fishing import FISH
+                fish_id = item_id.replace("fish_", "")
+                
+                if fish_id not in FISH:
+                    return await ctx.send("<a:X_:1437951830393884788> Fish not found!")
+                
+                fish = FISH[fish_id]
+                
+                # Purchase
+                await update_user_data(ctx.author.id, mora=mora - price)
+                
+                # Give seller the money
+                seller_data = await get_user_data(seller_id)
+                await update_user_data(seller_id, mora=seller_data.get("mora", 0) + price)
+                
+                # Add fish to buyer
+                await db.execute("""
+                    INSERT INTO caught_fish (user_id, fish_id, quantity)
+                    VALUES (?, ?, 1)
+                    ON CONFLICT(user_id, fish_id) DO UPDATE SET quantity = quantity + 1
+                """, (ctx.author.id, fish_id))
+                
+                # Remove listing
+                await db.execute(
+                    "DELETE FROM black_market_listings WHERE listing_id = ?",
+                    (listing_id,)
+                )
+                await db.commit()
+                
+                # Notify seller
+                try:
+                    seller = await self.bot.fetch_user(seller_id)
+                    notify_embed = discord.Embed(
+                        title="💰 Fish Sold!",
+                        description=f"Your {fish['emoji']} **{fish['name']}** was purchased by **{ctx.author.display_name}** for {price:,} <:mora:1437958309255577681>!",
+                        color=0x2ECC71
+                    )
+                    await seller.send(embed=notify_embed)
+                except:
+                    pass
+                
+                embed = discord.Embed(
+                    title="🐟 Fish Purchased!",
+                    description=f"You bought {fish['emoji']} **{fish['name']}** from the player market for {price:,} <:mora:1437958309255577681>",
+                    color=0x2ECC71
+                )
+                embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+                return await ctx.send(embed=embed)
+
+            # Regular item purchase
             item = ITEMS[item_id]
 
             # Check stackability
@@ -826,6 +1062,15 @@ class BlackMarket(commands.Cog):
             color=0x2ECC71
         )
         embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+        
+        # Add emoji thumbnail
+        import re
+        match = re.match(r'<(a?):[^:]+:(\d+)>', item['emoji'])
+        if match:
+            animated, emoji_id = match.groups()
+            ext = 'gif' if animated else 'png'
+            emoji_url = f'https://cdn.discordapp.com/emojis/{emoji_id}.{ext}'
+            embed.set_thumbnail(url=emoji_url)
         await ctx.send(embed=embed)
 
     @commands.command(name="item")
@@ -836,8 +1081,16 @@ class BlackMarket(commands.Cog):
         
         if not item_name:
             return await ctx.send("<a:X_:1437951830393884788> Usage: `gitem <item name>`\nExample: `gitem lucky dice`")
-        
-        # Find item by name or alias
+                # Helper function to extract emoji URL
+        def get_emoji_url(emoji_str):
+            import re
+            match = re.match(r'<(a?):([^:]+):(\d+)>', emoji_str)
+            if match:
+                animated, name, emoji_id = match.groups()
+                ext = 'gif' if animated else 'png'
+                return f'https://cdn.discordapp.com/emojis/{emoji_id}.{ext}'
+            return None
+                # Find item by name or alias
         item_id = None
         item_name_lower = item_name.lower().replace(" ", "_")
         
@@ -865,7 +1118,11 @@ class BlackMarket(commands.Cog):
             color=RARITY_COLORS.get(item['rarity'], 0x2ECC71)
         )
         embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
-        embed.set_thumbnail(url=ctx.author.display_avatar.url)
+        
+        # Set item emoji as thumbnail
+        emoji_url = get_emoji_url(item['emoji'])
+        if emoji_url:
+            embed.set_thumbnail(url=emoji_url)
         
         embed.add_field(name="Rarity", value=item['rarity'], inline=True)
         embed.add_field(name="Price", value=f"{item['base_price']:,} <:mora:1437958309255577681>", inline=True)
@@ -893,6 +1150,7 @@ class BlackMarket(commands.Cog):
                 self.message = None
 
             def get_embed(self):
+                import re
                 item_id, item = items_list[self.current_page]
                 embed = discord.Embed(
                     title=f"{item['emoji']} {item['name']}",
@@ -900,10 +1158,19 @@ class BlackMarket(commands.Cog):
                     color=RARITY_COLORS.get(item['rarity'], 0x2ECC71)
                 )
                 embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
-                embed.set_thumbnail(url=ctx.author.display_avatar.url)  # Will show emoji in title
+                
+                # Extract emoji URL and set as thumbnail
+                emoji_str = item['emoji']
+                match = re.match(r'<(a?):[^:]+:(\d+)>', emoji_str)
+                if match:
+                    animated, emoji_id = match.groups()
+                    ext = 'gif' if animated else 'png'
+                    emoji_url = f'https://cdn.discordapp.com/emojis/{emoji_id}.{ext}'
+                    embed.set_thumbnail(url=emoji_url)
                 
                 embed.add_field(name="Rarity", value=item['rarity'], inline=True)
-                embed.add_field(name="Price", value=f"{item['base_price']:,} <:mora:1437958309255577681>", inline=True)
+                price_value = f"{item['base_price']:,} <:mora:1437958309255577681>" if item['base_price'] else "Not for sale"
+                embed.add_field(name="Price", value=price_value, inline=True)
                 embed.add_field(name="Type", value=item['type'].title(), inline=True)
                 embed.add_field(name="Duration", value=item['duration'], inline=False)
                 embed.add_field(name="Source", value=item['source'], inline=False)
@@ -911,7 +1178,7 @@ class BlackMarket(commands.Cog):
                 embed.set_footer(text=f"Item {self.current_page + 1}/{len(items_list)} • Use gbm to view the shop")
                 return embed
 
-            @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.gray)
+            @discord.ui.button(label="◀️ Previous", style=discord.ButtonStyle.blurple, row=0)
             async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
                 if interaction.user.id != ctx.author.id:
                     return await interaction.response.send_message("<a:X_:1437951830393884788> This isn't your menu!", ephemeral=True)
@@ -922,7 +1189,7 @@ class BlackMarket(commands.Cog):
                     self.current_page = self.max_page
                 await interaction.response.edit_message(embed=self.get_embed(), view=self)
 
-            @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.gray)
+            @discord.ui.button(label="Next ▶️", style=discord.ButtonStyle.blurple, row=0)
             async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
                 if interaction.user.id != ctx.author.id:
                     return await interaction.response.send_message("<a:X_:1437951830393884788> This isn't your menu!", ephemeral=True)

@@ -94,13 +94,13 @@ class CoinFlip(commands.Cog):
             if is_premium and flip_result != choice and random.random() < 0.08:
                 flip_result = choice  # Premium luck override
             
-            # Check for Lucky Dice (adds +5% win chance)
+            # Check for Lucky Dice (adds +3% win chance)
             from utils.database import has_active_item, consume_active_item
             has_lucky = await has_active_item(ctx.author.id, "lucky_dice")
             
             if has_lucky > 0:
-                # 5% chance to override loss into win
-                if flip_result != choice and random.random() < 0.05:
+                # 3% chance to override loss into win
+                if flip_result != choice and random.random() < 0.03:
                     flip_result = choice  # Lucky override!
                     await consume_active_item(ctx.author.id, "lucky_dice")
             

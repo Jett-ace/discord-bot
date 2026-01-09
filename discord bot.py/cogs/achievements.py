@@ -87,6 +87,41 @@ class Achievements(commands.Cog):
                     total_losses = 0
                     win_rate = 0
             
+            # Get global rank for medal badge
+            async with aiosqlite.connect(DB_PATH) as db:
+                query = """
+                    SELECT 
+                        u.user_id,
+                        (COALESCE(u.mora, 0) / 1000) + 
+                        (COALESCE(b.deposited_amount, 0) / 1000) +
+                        (COALESCE(a.level, 0) * 10000) + 
+                        (COALESCE(ach.ach_count, 0) * 5000) +
+                        (COALESCE(d.streak, 0) * 1000) as total_score
+                    FROM users u
+                    LEFT JOIN user_bank_deposits b ON u.user_id = b.user_id
+                    LEFT JOIN accounts a ON u.user_id = a.user_id
+                    LEFT JOIN (SELECT user_id, COUNT(*) as ach_count FROM achievements GROUP BY user_id) ach ON u.user_id = ach.user_id
+                    LEFT JOIN daily_claims d ON u.user_id = d.user_id AND (d.claim_type = 'regular' OR d.claim_type IS NULL)
+                    WHERE u.enrolled = 1
+                    ORDER BY total_score DESC
+                    LIMIT 3
+                """
+                async with db.execute(query) as cursor:
+                    top_3 = await cursor.fetchall()
+            
+            # Determine medal badge
+            medal_badge = ""
+            if top_3:
+                user_ids = [row[0] for row in top_3]
+                if target.id in user_ids:
+                    rank = user_ids.index(target.id) + 1
+                    if rank == 1:
+                        medal_badge = " <a:Medal:1438198856910241842>"
+                    elif rank == 2:
+                        medal_badge = " <a:Medal3:1438198826799468604>"
+                    elif rank == 3:
+                        medal_badge = " <a:Medal2:1438198813851652117>"
+            
             # Get premium status
             premium_cog = self.bot.get_cog('Premium')
             is_premium = False
@@ -101,7 +136,11 @@ class Achievements(commands.Cog):
                     badge = await premium_cog.get_custom_badge(target.id)
                     if badge:
                         custom_badge = f" {badge}"
-                        badge_display = f"\n**Badge:** {badge}"
+                        badge_display = f"\n**Badge:** {badge}{medal_badge}"
+                else:
+                    # No custom badge but has medal
+                    if medal_badge:
+                        badge_display = f"\n**Badge:** {medal_badge}"
             
             # Get bank card tier
             bank_cog = self.bot.get_cog('Bank')
@@ -113,7 +152,16 @@ class Achievements(commands.Cog):
                 if card_tier > 0:
                     card_display = f" | {card_names[card_tier]}"
             
-            # Build embed with custom badge in title
+            # If no premium but has medal badge, still show it
+            if not is_premium and medal_badge and not badge_display:
+                badge_display = f"\n**Badge:** {medal_badge}"
+            
+            # Get fishing energy
+            from utils.database import get_fishing_energy
+            current_energy = await get_fishing_energy(target.id, is_premium)
+            max_energy = 9 if is_premium else 6
+            
+            # Build embed with custom badge in title (no medal)
             embed = discord.Embed(
                 title=f"{target.display_name}'s Profile{custom_badge}",
                 color=0xf39c12
@@ -133,9 +181,10 @@ class Achievements(commands.Cog):
             )
             embed.add_field(name="Progress", value=level_info, inline=False)
             
-            # Balance section with badge
+            # Balance section with badge and energy
             balance_info = (
                 f"**Wallet:** {user_data.get('mora', 0):,} <:mora:1437958309255577681>\n"
+                f"**Energy:** {current_energy}/{max_energy} <:energy:1459189042574004224>\n"
                 f"**Account:** {premium_tier}{card_display}{badge_display}"
             )
             embed.add_field(name="Balance", value=balance_info, inline=False)

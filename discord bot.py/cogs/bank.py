@@ -475,12 +475,18 @@ class Bank(commands.Cog):
             # Check premium status
             premium_cog = self.bot.get_cog('Premium')
             custom_badge = ""
+            is_premium = False
             if premium_cog:
                 is_premium = await premium_cog.is_premium(ctx.author.id)
                 if is_premium:
                     badge = await premium_cog.get_custom_badge(ctx.author.id)
                     if badge:
                         custom_badge = f" {badge}"
+            
+            # Get fishing energy
+            from utils.database import get_fishing_energy
+            current_energy = await get_fishing_energy(ctx.author.id, is_premium)
+            max_energy = 9 if is_premium else 6
             
             embed = discord.Embed(
                 title=f"{ctx.author.display_name}{custom_badge}'s Balance",
@@ -496,6 +502,11 @@ class Bank(commands.Cog):
             embed.add_field(
                 name="Bank Deposit <:mora:1437958309255577681>",
                 value=f"{deposited:,}",
+                inline=True
+            )
+            embed.add_field(
+                name="Fishing Energy <:energy:1459189042574004224>",
+                value=f"{current_energy}/{max_energy}",
                 inline=True
             )
             
@@ -525,6 +536,143 @@ class Bank(commands.Cog):
                 await ctx.send("<a:X_:1437951830393884788> Error retrieving balance.")
             except:
                 pass  # Silently fail if error message fails
+    
+    @commands.command(name="boosts", aliases=["activeeffects", "buffs"])
+    async def check_boosts(self, ctx):
+        """Check your active cards, effects, and boosts"""
+        if not await require_enrollment(ctx):
+            return
+        
+        try:
+            async with aiosqlite.connect(DB_PATH) as db:
+                # Get active items (time-limited or use-limited)
+                cursor = await db.execute(
+                    "SELECT item_id, activated_at, uses_remaining FROM active_items WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
+                active_items = await cursor.fetchall()
+                
+                # Get activated inventory items (horseshoe, clover)
+                cursor = await db.execute(
+                    "SELECT item_id, activated_at FROM inventory WHERE user_id = ? AND activated_at IS NOT NULL",
+                    (ctx.author.id,)
+                )
+                inventory_active = await cursor.fetchall()
+                
+                # Get bank card
+                cursor = await db.execute(
+                    "SELECT card_tier FROM bank_cards WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
+                card_row = await cursor.fetchone()
+                card_tier = card_row[0] if card_row else 0
+            
+            # Check premium status
+            premium_cog = self.bot.get_cog('Premium')
+            is_premium = premium_cog and await premium_cog.is_premium(ctx.author.id)
+            
+            embed = discord.Embed(
+                title="✨ Active Boosts & Effects",
+                description="Your current active cards and bonuses",
+                color=0xFFD700 if is_premium else 0x3498DB
+            )
+            embed.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
+            
+            # Active items with uses
+            if active_items:
+                items_list = []
+                for item_id, activated_at, uses in active_items:
+                    if item_id == "lucky_dice":
+                        items_list.append(f"<:dice:1457965149137670186> **Lucky Dice** - {uses} games left (+3% win chance)")
+                    elif item_id == "double_down":
+                        items_list.append(f"💳 **Double Down Card** - {uses} uses left (2x profit)")
+                    elif item_id == "golden_chip":
+                        items_list.append(f"<:goldenchip:1457964285207646264> **Golden Chip** - {uses} uses left (+30% profit)")
+                    elif item_id == "hot_streak":
+                        items_list.append(f"<:streak:1457966635838214247> **Hot Streak Card** - {uses} losses left (50% refund)")
+                    elif item_id == "rigged_deck":
+                        items_list.append(f"🃏 **Rigged Deck** - {uses} hands left (Guaranteed Blackjack win)")
+                    elif item_id == "card_counter":
+                        items_list.append(f"🎯 **Card Counter** - {uses} hands left (See dealer's hole card)")
+                
+                if items_list:
+                    embed.add_field(
+                        name="🎮 Active Game Items",
+                        value="\n".join(items_list),
+                        inline=False
+                    )
+            
+            # Time-based active items
+            if inventory_active:
+                time_items = []
+                now = datetime.now()
+                for item_id, activated_at in inventory_active:
+                    activated_time = datetime.fromisoformat(activated_at)
+                    
+                    if item_id == "xp_booster":
+                        expiry = activated_time + timedelta(hours=2)
+                        if now < expiry:
+                            time_left = expiry - now
+                            hours = time_left.seconds // 3600
+                            minutes = (time_left.seconds % 3600) // 60
+                            time_items.append(f"<:exp:1437553839359397928> **XP Booster** - {hours}h {minutes}m left (+50% XP)")
+                    
+                    elif item_id == "lucky_horseshoe":
+                        expiry = activated_time + timedelta(hours=4)
+                        if now < expiry:
+                            time_left = expiry - now
+                            hours = time_left.seconds // 3600
+                            minutes = (time_left.seconds % 3600) // 60
+                            time_items.append(f"<:luckyhorseshoe:1458353830704975884> **Lucky Horseshoe** - {hours}h {minutes}m left (+5% win chance)")
+                    
+                    elif item_id == "lucky_clover":
+                        expiry = activated_time + timedelta(minutes=30)
+                        if now < expiry:
+                            time_left = expiry - now
+                            minutes = time_left.seconds // 60
+                            time_items.append(f"<a:lucky_clover:1459167567154512065> **Lucky Clover** - {minutes}m left (+3% win chance)")
+                
+                if time_items:
+                    embed.add_field(
+                        name="⏰ Timed Effects",
+                        value="\n".join(time_items),
+                        inline=False
+                    )
+            
+            # Bank card at the end
+            card_names = {0: "None", 1: "<:platinum:1457410519534403635> Platinum Card", 2: "<a:gold:1457409675963138205> Golden Card"}
+            card_benefits = {
+                0: "None",
+                1: "• 50M deposit limit",
+                2: "• 150M deposit limit\n• 10% cashback on losses\n• 2 loans per day (750K max)"
+            }
+            
+            if card_tier > 0:
+                embed.add_field(
+                    name=f"💳 Bank Card: {card_names[card_tier]}",
+                    value=card_benefits[card_tier],
+                    inline=False
+                )
+            
+            # If no active boosts
+            if not active_items and not inventory_active and card_tier == 0:
+                embed.description = "You don't have any active boosts right now!"
+                embed.add_field(
+                    name="How to Get Boosts",
+                    value=(
+                        "• Use `gbm` to buy items from Black Market\n"
+                        "• Use `guse <item>` to activate items\n"
+                        "• Buy bank cards: `gbankcard buy`"
+                    ),
+                    inline=False
+                )
+            
+            embed.set_footer(text="Tip: Stack items for maximum bonuses!")
+            await send_embed(ctx, embed)
+            
+        except Exception as e:
+            print(f"Error in boosts command: {e}")
+            await ctx.send("<a:X_:1437951830393884788> Error retrieving boosts.")
     
     @commands.command(name="bank")
     async def bank_info(self, ctx):
@@ -809,13 +957,20 @@ class Bank(commands.Cog):
         
         # Check premium status and card tier for deposit limit
         premium_cog = self.bot.get_cog("Premium")
-        is_premium = premium_cog and await premium_cog.is_premium(ctx.author.id)
+        is_premium = False
+        if premium_cog:
+            try:
+                is_premium = await premium_cog.is_premium(ctx.author.id)
+            except:
+                is_premium = False
+        
         card_tier = await self.get_user_card_tier(ctx.author.id)
         base_deposit_limit = self.get_card_limit(card_tier, is_premium)
         
         # Add bank_capacity bonus from banker's keys
         deposit_limit = base_deposit_limit + bank_capacity_bonus
         
+        # Premium users have unlimited deposits - skip limit check entirely
         if not is_premium:
             # Check against card tier limit + bonuses
             new_total = current_deposit + deposit_amount

@@ -330,9 +330,11 @@ class Mines(commands.Cog):
             is_premium = False
             if premium_cog:
                 is_premium = await premium_cog.is_premium(ctx.author.id)
+                print(f"[MINES] User {ctx.author.id} premium status: {is_premium}")
             
             # Premium: 1M, Normal: 200K, Unlimited: No limit
             MAX_BET = 1_000_000 if is_premium else 200_000
+            print(f"[MINES] User {ctx.author.id} MAX_BET set to: {MAX_BET:,}")
             if unlimited:
                 MAX_BET = float('inf')
 

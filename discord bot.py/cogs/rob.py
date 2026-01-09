@@ -31,7 +31,8 @@ class Rob(commands.Cog):
                         guard_dog INTEGER DEFAULT 0,
                         guard_dog_expires TEXT,
                         spiky_fence INTEGER DEFAULT 0,
-                        lock INTEGER DEFAULT 0
+                        lock INTEGER DEFAULT 0,
+                        ninjapack INTEGER DEFAULT 0
                     )
                 """)
                 
@@ -51,6 +52,13 @@ class Rob(commands.Cog):
                 except:
                     pass  # Column already exists
                 
+                # Migration: Add ninjapack column if it doesn't exist
+                try:
+                    await db.execute("ALTER TABLE rob_items ADD COLUMN ninjapack INTEGER DEFAULT 0")
+                    await db.commit()
+                except:
+                    pass  # Column already exists
+                
                 await db.commit()
         except Exception as e:
             print(f"Error loading Rob cog: {e}")
@@ -59,7 +67,7 @@ class Rob(commands.Cog):
         """Get user's rob items from database"""
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute(
-                "SELECT shotgun, mask, night_vision, lockpicker, guard_dog, guard_dog_expires, spiky_fence, lock FROM rob_items WHERE user_id = ?",
+                "SELECT shotgun, mask, night_vision, lockpicker, guard_dog, guard_dog_expires, spiky_fence, lock, ninjapack FROM rob_items WHERE user_id = ?",
                 (user_id,)
             ) as cursor:
                 result = await cursor.fetchone()
@@ -72,7 +80,7 @@ class Rob(commands.Cog):
                         (user_id,)
                     )
                     await db.commit()
-                    return (0, 0, 0, 0, 0, None, 0, 0)
+                    return (0, 0, 0, 0, 0, None, 0, 0, 0)
     
     async def check_guard_dog_expired(self, user_id):
         """Check if user's guard dog has expired and remove it"""
@@ -90,6 +98,104 @@ class Rob(commands.Cog):
                             (user_id,)
                         )
                         await db.commit()
+    
+    @commands.command(name="robstatus", aliases=["robstats", "rs"])
+    async def rob_status(self, ctx):
+        """Check your rob success rate and defense stats
+        
+        Usage: grobstatus
+        """
+        # Get user's rob items
+        items = await self.get_user_items(ctx.author.id)
+        shotgun, mask, night_vision, lockpicker, guard_dog, guard_dog_expires, spiky_fence, lock, ninjapack = items
+        
+        # Check if guard dog expired
+        await self.check_guard_dog_expired(ctx.author.id)
+        
+        # Recalculate active guard dog status
+        if guard_dog_expires:
+            expiry = datetime.fromisoformat(guard_dog_expires)
+            if datetime.now() > expiry:
+                guard_dog = 0
+        
+        # Calculate success rate (same logic as rob command)
+        base_chance = 55
+        chance = base_chance
+        
+        # Add bonuses
+        if shotgun > 0:
+            chance += 10
+        if mask > 0:
+            chance += 10
+        if night_vision > 0:
+            chance += 10
+        if lockpicker > 0:
+            chance += 10
+        
+        # Full set bonus
+        if shotgun > 0 and mask > 0 and night_vision > 0 and lockpicker > 0:
+            chance += 25  # Extra bonus for full set
+        
+        # Cap at 95%
+        chance = min(chance, 95)
+        
+        # Calculate defense rate
+        defense_items = []
+        defense_chance = 0
+        
+        if guard_dog > 0:
+            defense_items.append(f"🐕 Guard Dog (+30%) ({guard_dog} left)")
+            defense_chance += 30
+        if spiky_fence > 0:
+            defense_items.append(f"🚧 Spiky Fence (+20%) ({spiky_fence} left)")
+            defense_chance += 20
+        if lock > 0:
+            defense_items.append(f"🔒 Lock (+15%) ({lock} left)")
+            defense_chance += 15
+        
+        # Cap defense at 95%
+        defense_chance = min(defense_chance, 95)
+        
+        # Build embed
+        embed = discord.Embed(
+            title=f"💰 {ctx.author.display_name}'s Rob Stats",
+            color=0xE74C3C
+        )
+        
+        # Attack stats
+        attack_items = []
+        if shotgun > 0:
+            attack_items.append("<:shotgun:1458773713418977364> Shotgun (+10%)")
+        if mask > 0:
+            attack_items.append("🎭 Mask (+10%)")
+        if night_vision > 0:
+            attack_items.append("🕶️ Night Vision (+10%)")
+        if lockpicker > 0:
+            attack_items.append("🔓 Lockpicker (+10%)")
+        if shotgun > 0 and mask > 0 and night_vision > 0 and lockpicker > 0:
+            attack_items.append("✨ **Full Set Bonus (+25%)**")
+        if ninjapack > 0:
+            attack_items.append(f"<:ninja:1458503378450780408> Ninja Pack (+30% + Anonymous) ({ninjapack} left)")
+        
+        attack_text = "\n".join(attack_items) if attack_items else "No attack items"
+        embed.add_field(
+            name=f"⚔️ Attack Success Rate: {chance}%",
+            value=attack_text,
+            inline=False
+        )
+        
+        # Defense stats
+        defense_text = "\n".join(defense_items) if defense_items else "No defense items"
+        
+        embed.add_field(
+            name=f"🛡️ Defense Rate: {defense_chance}%",
+            value=defense_text,
+            inline=False
+        )
+        
+        embed.set_footer(text="Buy items from the rob shop to increase your chances!")
+        
+        await ctx.send(embed=embed)
     
     @commands.command(name="rob")
     async def rob_user(self, ctx, target: discord.Member = None):
@@ -122,12 +228,12 @@ class Rob(commands.Cog):
         
         await ensure_user_db(target.id)
         
-        # Check for Plasma Canon (ultimate rob weapon)
+        # Check for Plasma Cannon (ultimate rob weapon)
         from utils.database import has_inventory_item, consume_inventory_item
         has_plasma = await has_inventory_item(ctx.author.id, "plasma_canon")
         
         if has_plasma > 0:
-            # PLASMA CANON MODE: Guaranteed success, steals from wallet AND bank, no cooldown
+            # PLASMA CANNON MODE: Guaranteed success, steals from wallet AND bank, no cooldown
             target_data = await get_user_data(target.id)
             target_mora = target_data.get('mora', 0)
             
@@ -145,7 +251,7 @@ class Rob(commands.Cog):
             if total_money < 100000:
                 return await ctx.send(f"<a:X_:1437951830393884788> {target.mention} doesn't have enough money to rob! (min 100,000 total)")
             
-            # Consume plasma canon
+            # Consume plasma cannon
             await consume_inventory_item(ctx.author.id, "plasma_canon")
             
             # Calculate stolen amount from wallet (2% × 3 = 6% of mora)
@@ -180,7 +286,7 @@ class Rob(commands.Cog):
                 ctx.author.id,
                 "plasma_rob",
                 stolen_amount,
-                f"Plasma Canon robbed {target.display_name} ({target.id})"
+                f"Plasma Cannon robbed {target.display_name} ({target.id})"
             )
             
             breakdown = f"💰 Wallet: **{stolen_from_wallet:,}** <:mora:1437958309255577681>\n"
@@ -189,7 +295,7 @@ class Rob(commands.Cog):
             breakdown += f"\n💥 **Total Extracted: {stolen_amount:,}** <:mora:1437958309255577681>"
             
             embed = discord.Embed(
-                title="<:plasmacanon:1457975521521434624> INITIATING PLASMA CANON",
+                title="<:plasmacanon:1457975521521434624> INITIATING PLASMA CANNON",
                 description=f"**TARGET:** {target.mention}\n⚡ **FIRING...** ⚡\n\n{breakdown}",
                 color=0xFF4500
             )
@@ -261,11 +367,11 @@ class Rob(commands.Cog):
         
         # Get robber's items
         robber_items = await self.get_user_items(ctx.author.id)
-        shotgun, mask, night_vision, lockpicker, guard_dog, _, spiky_fence, lock_item = robber_items
+        shotgun, mask, night_vision, lockpicker, guard_dog, _, spiky_fence, lock_item, ninjapack = robber_items
         
         # Get victim's defense items
         victim_items = await self.get_user_items(target.id)
-        v_shotgun, v_mask, v_night_vision, v_lockpicker, v_guard_dog, v_guard_dog_expires, v_spiky_fence, v_lock = victim_items
+        v_shotgun, v_mask, v_night_vision, v_lockpicker, v_guard_dog, v_guard_dog_expires, v_spiky_fence, v_lock, v_ninjapack = victim_items
         
         # Check if victim's guard dog expired
         await self.check_guard_dog_expired(target.id)
@@ -306,6 +412,8 @@ class Rob(commands.Cog):
             success_rate += 20
         if mask and night_vision and lockpicker:
             success_rate += 25  # Full thief pack bonus
+        if ninjapack:
+            success_rate += 30  # Ninja pack bonus
         
         # Victim defenses
         defense_rate = 0
@@ -338,6 +446,11 @@ class Rob(commands.Cog):
                     "UPDATE rob_items SET lockpicker = lockpicker - 1 WHERE user_id = ?",
                     (ctx.author.id,)
                 )
+            if ninjapack:
+                await db.execute(
+                    "UPDATE rob_items SET ninjapack = ninjapack - 1 WHERE user_id = ?",
+                    (ctx.author.id,)
+                )
             
             await db.commit()
         
@@ -364,6 +477,30 @@ class Rob(commands.Cog):
                 f"Robbed {target.display_name} ({target.id})"
             )
             
+            # Notify victim
+            try:
+                if ninjapack:
+                    # Anonymous robbery - victim doesn't know who
+                    victim_embed = discord.Embed(
+                        title="🥷 You've Been Robbed!",
+                        description=f"**Anonymous** robbed **{stolen_amount:,}** <:mora:1437958309255577681> from you!\n\n🕵️ The thief's identity remains unknown...",
+                        color=0x2C2F33
+                    )
+                    victim_embed.set_footer(text="Someone used a Ninja Pack • Buy defense items from gshop")
+                else:
+                    # Normal robbery - show who robbed them
+                    victim_embed = discord.Embed(
+                        title="🚨 You've Been Robbed!",
+                        description=f"{ctx.author.mention} robbed **{stolen_amount:,}** <:mora:1437958309255577681> from you!",
+                        color=0xE74C3C
+                    )
+                    victim_embed.set_footer(text="Buy defense items from gshop to protect yourself")
+                
+                await target.send(embed=victim_embed)
+            except discord.Forbidden:
+                # Can't DM user, silently continue
+                pass
+            
             # Set cooldown to 30 minutes for successful robbery
             async with aiosqlite.connect(DB_PATH) as db:
                 await db.execute(
@@ -374,11 +511,21 @@ class Rob(commands.Cog):
                 )
                 await db.commit()
             
-            embed = discord.Embed(
-                title="💰 Robbery Successful!",
-                description=f"You robbed **{stolen_amount:,}** <:mora:1437958309255577681> from {target.mention}!",
-                color=0x2ECC71
-            )
+            # Check if anonymous robbery (ninja pack)
+            if ninjapack:
+                # Send anonymous success message (victim doesn't get notified)
+                embed = discord.Embed(
+                    title="<:ninja:1458503378450780408> Silent Robbery Successful!",
+                    description=f"You anonymously robbed **{stolen_amount:,}** <:mora:1437958309255577681> from {target.mention}!\n\n🥷 They have no idea who robbed them!",
+                    color=0x9B59B6
+                )
+            else:
+                # Normal robbery - victim will see who robbed them
+                embed = discord.Embed(
+                    title="💰 Robbery Successful!",
+                    description=f"You robbed **{stolen_amount:,}** <:mora:1437958309255577681> from {target.mention}!",
+                    color=0x2ECC71
+                )
             embed.add_field(
                 name="Amount Stolen",
                 value=f"2% of their mora",

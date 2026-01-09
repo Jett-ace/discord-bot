@@ -369,7 +369,21 @@ class BlackjackView(discord.ui.View):
                 self.dealer.append(self.deck.pop())
 
         dv = hand_value(self.dealer)
+        
+        # Check for lucky items for better odds
+        from utils.database import has_active_item, consume_active_item
+        has_dice = await has_active_item(self.ctx.author.id, "lucky_dice")
+        has_horseshoe = await has_active_item(self.ctx.author.id, "lucky_horseshoe")
+        
+        # Calculate total luck bonus (5% dice + 10% horseshoe)
+        luck_bonus = 0
+        if has_dice > 0:
+            luck_bonus += 0.05
+        if has_horseshoe > 0:
+            luck_bonus += 0.10
+        
         total_payout = 0
+        luck_items_used = False
         # determine outcome per hand and compute total payout
         for h in self.hands:
             stake = int(h['stake'])
@@ -391,11 +405,28 @@ class BlackjackView(discord.ui.View):
             elif pv > dv:
                 payout = stake * 2
             elif pv == dv:
-                payout = stake
+                # Apply luck bonus: chance to convert push to win
+                if luck_bonus > 0 and random.random() < luck_bonus:
+                    payout = stake * 2  # Convert push to win!
+                    luck_items_used = True
+                else:
+                    payout = stake
             else:
-                payout = 0
+                # Loss - apply luck bonus: chance to convert loss to push
+                if luck_bonus > 0 and random.random() < luck_bonus:
+                    payout = stake  # Convert loss to push!
+                    luck_items_used = True
+                else:
+                    payout = 0
 
             total_payout += int(payout)
+        
+        # Consume lucky items if used
+        if luck_items_used:
+            if has_dice > 0:
+                await consume_active_item(self.ctx.author.id, "lucky_dice")
+            if has_horseshoe > 0:
+                await consume_active_item(self.ctx.author.id, "lucky_horseshoe")
         # compute total to credit (immediate-awards + payouts for non-awarded hands)
         total_to_credit = int(self._immediate_awarded) + int(total_payout)
         
@@ -531,7 +562,7 @@ class Blackjack(commands.Cog):
             unlimited = await has_unlimited_game(ctx.author.id, "blackjack")
             
             if bet is None:
-                limit_text = "No limit" if unlimited else f"Max: {200_000:,} Mora"
+                limit_text = "No limit" if unlimited else f"Max: {15_000_000:,} Mora"
                 embed = discord.Embed(
                     title="❌ Missing Bet Amount",
                     description="You need to specify how much you want to bet!",
@@ -549,9 +580,11 @@ class Blackjack(commands.Cog):
             is_premium = False
             if premium_cog:
                 is_premium = await premium_cog.is_premium(ctx.author.id)
+                print(f"[BLACKJACK] User {ctx.author.id} premium status: {is_premium}")
             
             # Premium: 20M max, Normal: 15M max
             MAX_BET = 20_000_000 if is_premium else 15_000_000
+            print(f"[BLACKJACK] User {ctx.author.id} MAX_BET set to: {MAX_BET:,}")
             
             data = await get_user_data(ctx.author.id)
             balance = data.get('mora', 0)
@@ -604,6 +637,27 @@ class Blackjack(commands.Cog):
                 await consume_active_item(ctx.author.id, "rigged_deck")
                 await consume_inventory_item(ctx.author.id, "rigged_deck")
                 payout = int(amount * 2.2)
+                
+                # Check for Golden Chip bonus (stacks with rigged deck!)
+                has_chip = await has_active_item(ctx.author.id, "golden_chip")
+                chip_bonus = 0
+                if has_chip > 0:
+                    profit = payout - amount
+                    chip_bonus = int(profit * 0.3)
+                    payout += chip_bonus
+                    await consume_active_item(ctx.author.id, "golden_chip")
+                    await consume_inventory_item(ctx.author.id, "golden_chip")
+                
+                # Check for Double Down Card (stacks with everything!)
+                has_double = await has_active_item(ctx.author.id, "double_down")
+                double_bonus = 0
+                if has_double > 0:
+                    profit = payout - amount
+                    double_bonus = profit  # Double the profit
+                    payout += double_bonus
+                    await consume_active_item(ctx.author.id, "double_down")
+                    await consume_inventory_item(ctx.author.id, "double_down")
+                
                 try:
                     data = await get_user_data(ctx.author.id)
                     data['mora'] += payout
@@ -620,9 +674,15 @@ class Blackjack(commands.Cog):
                 except Exception:
                     pass
 
+                desc = f"**Rigged Deck guaranteed win!** +{payout:,} <:mora:1437958309255577681>"
+                if chip_bonus > 0:
+                    desc += f"\n<:goldenchip:1457964285207646264> Golden Chip: +{chip_bonus:,} bonus!"
+                if double_bonus > 0:
+                    desc += f"\n💳 Double Down: +{double_bonus:,} bonus!"
+                
                 e = discord.Embed(
                     title=f"<a:deck:1457965675082551306> Rigged Deck - Blackjack!", 
-                    description=f"**Rigged Deck guaranteed win!** +{payout:,} <:mora:1437958309255577681>",
+                    description=desc,
                     color=0xF1C40F
                 )
                 e.set_author(name=ctx.author.display_name, icon_url=ctx.author.display_avatar.url)
